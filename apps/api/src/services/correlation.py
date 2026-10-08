@@ -9,7 +9,7 @@ Manages the lifecycle transition from VALIDATED to CORRELATED:
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from packages.contracts.enums import CaseStatus
 from packages.contracts.models import NormalizedEvent, RingEvent
@@ -24,6 +24,7 @@ class CorrelationOutcome:
     correlated: bool
     case_id: str | None = None
     message: str = ""
+    is_new_case: bool = False
 
 
 class CaseCorrelationServiceProtocol(Protocol):
@@ -55,6 +56,8 @@ class DefaultCaseCorrelationService:
         event: RingEvent,
         normalized_event: NormalizedEvent,
         organization_id: str,
+        *args: Any,
+        **kwargs: Any,
     ) -> CorrelationOutcome:
         """Check for an existing active case and associate the event if matched.
 

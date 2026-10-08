@@ -82,6 +82,26 @@ class CaseCorrelationService:
             if candidate.device_id != event.device_id:
                 continue
 
+            # Exact event or case match is immediately correlated regardless of time delta
+            if (
+                candidate.event_id == event.event_id
+                or candidate.case_id == f"case_{event.event_id}"
+            ):
+                self.event_repo.correlate_event_to_case(
+                    event_id=event.event_id,
+                    case_id=candidate.case_id,
+                )
+                self.event_repo.save_normalized_event(
+                    event=normalized_event,
+                    case_id=candidate.case_id,
+                )
+                return CorrelationResult(
+                    case_id=candidate.case_id,
+                    is_new_case=False,
+                    correlated=True,
+                    reason=f"Correlated to existing case '{candidate.case_id}' for event '{event.event_id}'",
+                )
+
             case_dt = self._parse_iso(candidate.created_at)
             time_diff = abs((event_dt - case_dt).total_seconds())
 

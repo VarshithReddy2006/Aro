@@ -12,7 +12,9 @@ import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
+from packages.contracts.enums import CaseStatus
 from packages.contracts.models import CaseBrief, Proposal
+from packages.contracts.state_machine import transition_case
 
 from ..repositories.interfaces import CaseRepository
 from .ai_validation import AIValidationPipeline, AIValidationResult
@@ -96,7 +98,7 @@ class BriefService:
                         validation_result.error_stage,
                         validation_result.error_message,
                     )
-            except (RuntimeError, TimeoutError, ValueError, ConnectionError, OSError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Bedrock invocation failed for case %s: %s. Switching to fallback.",
                     case_id,
@@ -133,9 +135,27 @@ class BriefService:
             is_fallback=is_fallback,
         )
 
-        # Step 5: Update Case metadata in repository
+        # Step 5: Advance case lifecycle state and update metadata in repository
         case = self.case_repo.get_case(case_id=case_id, organization_id=organization_id)
-        updated_case = case.model_copy(
+
+        current_case = case
+        if current_case.status == CaseStatus.RECEIVED:
+            current_case = transition_case(current_case, CaseStatus.VALIDATED)
+        if current_case.status == CaseStatus.VALIDATED:
+            current_case = transition_case(current_case, CaseStatus.CASE_CREATED)
+        if current_case.status == CaseStatus.CASE_CREATED:
+            current_case = transition_case(current_case, CaseStatus.CONTEXT_READY)
+
+        if proposals:
+            if current_case.status == CaseStatus.CONTEXT_READY:
+                current_case = transition_case(current_case, CaseStatus.PROPOSAL_READY)
+            if current_case.status == CaseStatus.PROPOSAL_READY:
+                current_case = transition_case(current_case, CaseStatus.APPROVAL_PENDING)
+        else:
+            if current_case.status in (CaseStatus.CONTEXT_READY, CaseStatus.PROPOSAL_READY):
+                current_case = transition_case(current_case, CaseStatus.UNRESOLVED)
+
+        updated_case = current_case.model_copy(
             update={
                 "brief_id": brief.brief_id,
                 "active_proposal_id": proposals[0].proposal_id if proposals else None,

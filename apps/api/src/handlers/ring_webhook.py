@@ -23,32 +23,76 @@ logger = logging.getLogger("aro.ring_webhook_handler")
 _cached_secret: str | None = None
 
 
+def _reset_cached_secret() -> None:
+    """Clear cached secret for test isolation."""
+    global _cached_secret
+    _cached_secret = None
+
+
 def _resolve_webhook_secret() -> str:
-    """Resolve Ring secret from environment or SSM Parameter Store."""
+    """Resolve Ring secret from environment or SSM Parameter Store with strict env fail-closed policy."""
     global _cached_secret
     if _cached_secret:
         return _cached_secret
 
-    secret = os.environ.get("RING_WEBHOOK_SECRET")
-    if secret:
-        _cached_secret = secret
-        return secret
+    env = os.environ.get("ARO_ENV", "demo").strip().lower()
+    is_demo = env in {"demo", "local", "test"}
 
-    param_name = os.environ.get("RING_SECRET_PARAM")
-    if param_name:
-        try:
-            import boto3
+    if is_demo:
+        secret = os.environ.get("RING_WEBHOOK_SECRET")
+        if secret:
+            _cached_secret = secret
+            return secret
 
-            ssm = boto3.client("ssm")
-            resp = ssm.get_parameter(Name=param_name, WithDecryption=True)
-            param_val = resp.get("Parameter", {}).get("Value")
-            if param_val:
-                _cached_secret = param_val
-                return param_val
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not load Ring secret from SSM parameter %s: %s", param_name, exc)
+        param_name = os.environ.get("RING_SECRET_PARAM")
+        if param_name:
+            try:
+                import boto3
 
-    return "default_insecure_test_secret"
+                ssm = boto3.client("ssm")
+                resp = ssm.get_parameter(Name=param_name, WithDecryption=True)
+                param_val = resp.get("Parameter", {}).get("Value")
+                if param_val:
+                    _cached_secret = param_val
+                    return param_val
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not load Ring secret from SSM parameter %s in demo mode: %s",
+                    param_name,
+                    exc,
+                )
+
+        return "default_insecure_test_secret"
+
+    # In dev/prod: SSM parameter resolution is mandatory and fails closed
+    param_name = os.environ.get("RING_SECRET_PARAM") or f"/aro/{env}/ring/webhook-secret"
+    try:
+        import boto3
+
+        ssm = boto3.client("ssm")
+        resp = ssm.get_parameter(Name=param_name, WithDecryption=True)
+        param_val = resp.get("Parameter", {}).get("Value")
+        if not param_val or not param_val.strip():
+            logger.error(
+                "Empty secret retrieved from SSM parameter %s in %s environment", param_name, env
+            )
+            raise RuntimeError(
+                f"SSM parameter {param_name} for Ring webhook secret is empty in {env}"
+            )
+        _cached_secret = param_val
+        return param_val
+    except Exception as exc:
+        if isinstance(exc, RuntimeError):
+            raise
+        logger.error(
+            "Failed to load mandatory Ring webhook secret from SSM parameter %s in %s environment: %s",
+            param_name,
+            env,
+            exc,
+        )
+        raise RuntimeError(
+            f"Failed to load mandatory Ring secret from SSM parameter {param_name} in {env}"
+        ) from exc
 
 
 def _emit_eventbridge_notification(event_id: str, request_id: str | None) -> None:
@@ -65,7 +109,7 @@ def _emit_eventbridge_notification(event_id: str, request_id: str | None) -> Non
             "request_id": request_id,
             "source": "aro.ingest",
         }
-        events_client.put_events(
+        resp = events_client.put_events(
             Entries=[
                 {
                     "EventBusName": bus_name,
@@ -75,28 +119,63 @@ def _emit_eventbridge_notification(event_id: str, request_id: str | None) -> Non
                 }
             ]
         )
+        failed_count = resp.get("FailedEntryCount", 0)
+        if failed_count > 0:
+            entries = resp.get("Entries", [])
+            for entry in entries:
+                if "ErrorCode" in entry:
+                    logger.error(
+                        "EventBridge put_events entry failed for event %s: code=%s, message=%s",
+                        event_id,
+                        entry.get("ErrorCode"),
+                        entry.get("ErrorMessage"),
+                    )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to emit EventBridge notification for event %s: %s", event_id, exc)
 
 
 def _get_default_service() -> EventIngestionService:
-    """Build a default ingestion service if none injected."""
+    """Build a default ingestion service enforcing persistence requirements by environment."""
     secret = _resolve_webhook_secret()
+    env = os.environ.get("ARO_ENV", "demo").strip().lower()
     table_name = os.environ.get("ARO_TABLE_NAME")
-    if table_name and "demo" not in os.environ.get("ARO_ENV", "demo").lower():
-        try:
-            import boto3
 
-            from ..repositories.dynamodb import DynamoDBEventRepository
+    if env in {"demo", "local", "test"}:
+        if table_name:
+            try:
+                import boto3
 
-            table = boto3.resource("dynamodb").Table(table_name)
-            repo = DynamoDBEventRepository(table)  # type: ignore[assignment]
-            return EventIngestionService(event_repository=repo, webhook_secret=secret)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not connect to DynamoDB table %s: %s", table_name, exc)
+                from ..repositories.dynamodb import DynamoDBEventRepository
 
-    repo = InMemoryEventRepository()  # type: ignore[assignment]
-    return EventIngestionService(event_repository=repo, webhook_secret=secret)
+                table = boto3.resource("dynamodb").Table(table_name)
+                repo = DynamoDBEventRepository(table)  # type: ignore[assignment]
+                return EventIngestionService(event_repository=repo, webhook_secret=secret)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not connect to DynamoDB table %s in demo mode: %s", table_name, exc
+                )
+
+        repo = InMemoryEventRepository()  # type: ignore[assignment]
+        return EventIngestionService(event_repository=repo, webhook_secret=secret)
+
+    # dev / prod: MUST fail closed on DynamoDB
+    if not table_name:
+        logger.error("Missing required environment variable ARO_TABLE_NAME in %s environment", env)
+        raise RuntimeError(
+            f"DynamoDB table name (ARO_TABLE_NAME) not configured in {env} environment"
+        )
+
+    try:
+        import boto3
+
+        from ..repositories.dynamodb import DynamoDBEventRepository
+
+        table = boto3.resource("dynamodb").Table(table_name)
+        repo = DynamoDBEventRepository(table)  # type: ignore[assignment]
+        return EventIngestionService(event_repository=repo, webhook_secret=secret)
+    except Exception as exc:
+        logger.error("Could not connect to DynamoDB table in %s environment: %s", env, exc)
+        raise RuntimeError(f"DynamoDB initialization failed in {env} environment: {exc}") from exc
 
 
 def handle_ring_webhook(

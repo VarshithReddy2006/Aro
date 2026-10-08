@@ -190,9 +190,52 @@ class ApiServiceContainer:
     idempotency_repo: Any
     proposal_repo: Any
 
-    def __init__(self) -> None:
+    def __init__(self, use_in_memory: bool = False) -> None:
+        env = os.environ.get("ARO_ENV", "demo").strip().lower()
         table_name = os.environ.get("ARO_TABLE_NAME")
-        if table_name and "demo" not in os.environ.get("ARO_ENV", "demo").lower():
+
+        if use_in_memory or env in {"demo", "local", "test"}:
+            if table_name and not use_in_memory:
+                try:
+                    import boto3
+
+                    from ..repositories.dynamodb import (
+                        DynamoDBActionRepository,
+                        DynamoDBApprovalRepository,
+                        DynamoDBAuditRepository,
+                        DynamoDBCaseRepository,
+                        DynamoDBEventRepository,
+                        DynamoDBIdempotencyRepository,
+                        DynamoDBProposalRepository,
+                    )
+
+                    table = boto3.resource("dynamodb").Table(table_name)
+                    self.case_repo = DynamoDBCaseRepository(table)
+                    self.approval_repo = DynamoDBApprovalRepository(table)
+                    self.action_repo = DynamoDBActionRepository(table)
+                    self.audit_repo = DynamoDBAuditRepository(table)
+                    self.event_repo = DynamoDBEventRepository(table)
+                    self.idempotency_repo = DynamoDBIdempotencyRepository(table)
+                    self.proposal_repo = DynamoDBProposalRepository(table)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Demo mode DynamoDB initialization failed, falling back to in-memory: %s",
+                        exc,
+                    )
+                    self._init_in_memory()
+            else:
+                self._init_in_memory()
+        else:
+            # dev / prod: MUST NOT fall back to in-memory!
+            if not table_name:
+                logger.error(
+                    "Missing required environment variable ARO_TABLE_NAME in %s environment",
+                    env,
+                )
+                raise RuntimeError(
+                    f"DynamoDB table name (ARO_TABLE_NAME) not configured in {env} environment"
+                )
+
             try:
                 import boto3
 
@@ -214,13 +257,15 @@ class ApiServiceContainer:
                 self.event_repo = DynamoDBEventRepository(table)
                 self.idempotency_repo = DynamoDBIdempotencyRepository(table)
                 self.proposal_repo = DynamoDBProposalRepository(table)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Could not initialize DynamoDB tables, falling back to in-memory: %s", exc
+            except Exception as exc:
+                logger.error(
+                    "Could not initialize DynamoDB tables in %s environment: %s",
+                    env,
+                    exc,
                 )
-                self._init_in_memory()
-        else:
-            self._init_in_memory()
+                raise RuntimeError(
+                    f"DynamoDB initialization failed in {env} environment: {exc}"
+                ) from exc
 
         self.approval_service = ApprovalService(
             case_repo=self.case_repo,
@@ -258,6 +303,12 @@ class ApiServiceContainer:
 
 
 _container: ApiServiceContainer | None = None
+
+
+def _reset_container() -> None:
+    """Clear cached container for test isolation."""
+    global _container
+    _container = None
 
 
 def get_container() -> ApiServiceContainer:

@@ -395,7 +395,7 @@ def test_security_event_worker_retry_idempotency() -> None:
 def test_security_production_cognito_actor_authorized_mutation(monkeypatch) -> None:
     """In production mode, valid Cognito claims allow authorized OPERATOR mutation."""
     monkeypatch.setenv("ARO_ENV", "prod")
-    container = ApiServiceContainer()
+    container = ApiServiceContainer(use_in_memory=True)
 
     case_id = "case_prod_auth_01"
     org_id = "org_enterprise"
@@ -460,7 +460,7 @@ def test_security_production_cognito_actor_authorized_mutation(monkeypatch) -> N
 def test_security_production_viewer_cannot_mutate(monkeypatch) -> None:
     """In production mode, Cognito VIEWER role is strictly forbidden from approving cases (HTTP 403)."""
     monkeypatch.setenv("ARO_ENV", "prod")
-    container = ApiServiceContainer()
+    container = ApiServiceContainer(use_in_memory=True)
 
     case_id = "case_prod_viewer_01"
     org_id = "org_enterprise"
@@ -494,7 +494,7 @@ def test_security_production_viewer_cannot_mutate(monkeypatch) -> None:
 def test_security_production_arbitrary_actor_role_header_cannot_elevate(monkeypatch) -> None:
     """In production mode, incoming x-actor-role header cannot elevate a Cognito VIEWER to ADMIN/OPERATOR."""
     monkeypatch.setenv("ARO_ENV", "prod")
-    container = ApiServiceContainer()
+    container = ApiServiceContainer(use_in_memory=True)
 
     case_id = "case_prod_spoof_01"
     org_id = "org_enterprise"
@@ -534,7 +534,7 @@ def test_security_production_arbitrary_actor_role_header_cannot_elevate(monkeypa
 def test_security_production_unauthenticated_request_cannot_use_headers(monkeypatch) -> None:
     """In production mode, requests without Cognito claims cannot authenticate using simulated headers (HTTP 401)."""
     monkeypatch.setenv("ARO_ENV", "prod")
-    container = ApiServiceContainer()
+    container = ApiServiceContainer(use_in_memory=True)
 
     case_id = "case_prod_unauth_01"
     event = {
@@ -564,7 +564,7 @@ def test_security_production_unauthenticated_request_cannot_use_headers(monkeypa
 def test_security_production_tenant_identity_cannot_be_spoofed_via_headers(monkeypatch) -> None:
     """In production mode, Cognito custom:tenant_id is authoritative; client cannot spoof another tenant via headers."""
     monkeypatch.setenv("ARO_ENV", "prod")
-    container = ApiServiceContainer()
+    container = ApiServiceContainer(use_in_memory=True)
 
     # Victim case belongs to org_victim
     victim_case = Case(
