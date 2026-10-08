@@ -8,6 +8,7 @@ from .event_repository import DynamoDBEventRepository
 from .expected_delivery_repository import DynamoDBExpectedDeliveryRepository
 from .idempotency_repository import DynamoDBIdempotencyRepository
 from .policy_repository import DynamoDBPolicyRepository
+from .proposal_repository import DynamoDBProposalRepository
 
 __all__ = [
     "DynamoDBActionRepository",
@@ -18,4 +19,5 @@ __all__ = [
     "DynamoDBExpectedDeliveryRepository",
     "DynamoDBIdempotencyRepository",
     "DynamoDBPolicyRepository",
+    "DynamoDBProposalRepository",
 ]
