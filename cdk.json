@@ -1,0 +1,20 @@
+{
+  "app": "python infra/app.py",
+  "watch": {
+    "include": [
+      "infra/**",
+      "apps/api/**"
+    ],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "**/__pycache__",
+      "**/*.pyc",
+      "node_modules/**"
+    ]
+  },
+  "context": {
+    "@aws-cdk/core:stackRelativeExports": true
+  }
+}
