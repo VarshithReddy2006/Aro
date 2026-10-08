@@ -17,6 +17,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest
       - run: ruff check .
+      - run: ruff format --check .
 
   frontend:
     runs-on: ubuntu-latest
@@ -31,4 +32,18 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package.json
       - run: npm install
+      - run: npm test
       - run: npm run build
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pip install -e ".[dev]" aws-cdk-lib constructs
+      - run: npx aws-cdk synth
