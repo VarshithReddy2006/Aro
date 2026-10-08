@@ -104,7 +104,7 @@ class WorkerContainer:
             fallback_generator=fallback_gen,
         )
 
-        self.correlation_service = DefaultCaseCorrelationService(self.event_repo)
+        self.correlation_service = DefaultCaseCorrelationService(self.event_repo, self.case_repo)
         self.normalizer = RingNormalizer()
 
     def _init_in_memory(self) -> None:
@@ -206,6 +206,9 @@ def handle_event_bridge_event(
                 organization_id=org_id,
                 force_fallback=force_fallback,
             )
+
+            for prop in brief_result.proposals:
+                services.proposal_repo.save_proposal(prop, org_id)
 
             result_payload = {
                 "case_id": case_id,

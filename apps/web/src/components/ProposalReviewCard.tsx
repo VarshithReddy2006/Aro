@@ -32,6 +32,9 @@ export const ProposalReviewCard: React.FC<ProposalReviewCardProps> = ({
     <div className="card" style={{ borderColor: isPending ? "var(--boundary-accent)" : "var(--border-subtle)" }}>
       <div className="card-header">
         <h2 className="card-title">
+          <span style={{ color: "#60a5fa", marginRight: "8px", fontSize: "0.75rem", padding: "2px 6px", background: "rgba(59, 130, 246, 0.15)", borderRadius: "4px", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
+            AI PROPOSAL
+          </span>
           <span>Allowlisted Action Proposal</span>
         </h2>
         <span className="hash-pill" title="Canonical SHA-256 hash of this proposal payload">
@@ -96,6 +99,9 @@ export const ProposalReviewCard: React.FC<ProposalReviewCardProps> = ({
       {isPending && !isExpired && (
         <div className="approval-boundary-card">
           <div className="boundary-banner">
+            <span style={{ color: "#fbbf24", marginRight: "8px", fontSize: "0.75rem", padding: "2px 6px", background: "rgba(245, 158, 11, 0.15)", borderRadius: "4px", border: "1px solid rgba(245, 158, 11, 0.3)", fontWeight: 700 }}>
+              HUMAN DECISION
+            </span>
             <span className="boundary-title">Human Approval Required</span>
             <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
               Boundary Rule: Human Operator In The Loop

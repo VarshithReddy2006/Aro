@@ -387,3 +387,277 @@ def test_security_event_worker_retry_idempotency() -> None:
     # Retry with identical event
     resp2 = handle_event_bridge_event(event, container=worker_container)
     assert resp2["status"] == "IDEMPOTENT_SKIPPED"
+
+
+# ==============================================================================
+# PHASE 8.1 REGRESSION TESTS: AUTHENTICATION BOUNDARY ISOLATION
+# ==============================================================================
+def test_security_production_cognito_actor_authorized_mutation(monkeypatch) -> None:
+    """In production mode, valid Cognito claims allow authorized OPERATOR mutation."""
+    monkeypatch.setenv("ARO_ENV", "prod")
+    container = ApiServiceContainer()
+
+    case_id = "case_prod_auth_01"
+    org_id = "org_enterprise"
+    h = calculate_proposal_hash(
+        case_id=case_id,
+        action_type=ActionType.NOTIFY_OPERATOR,
+        reason="After-hours verification",
+        parameters={"message": "Staff notification", "urgency": "normal"},
+    )
+    prop = Proposal(
+        proposal_id="prop_prod_01",
+        case_id=case_id,
+        action_type=ActionType.NOTIFY_OPERATOR,
+        reason="After-hours verification",
+        parameters={"message": "Staff notification", "urgency": "normal"},
+        proposal_hash=h,
+    )
+    container.proposal_repo.save_proposal(prop, org_id)
+
+    case = Case(
+        case_id=case_id,
+        organization_id=org_id,
+        location_id="loc_hq",
+        device_id="dev_01",
+        event_id="evt_01",
+        title="Production Auth Incident",
+        status=CaseStatus.APPROVAL_PENDING,
+        version=1,
+        active_proposal_id=prop.proposal_id,
+    )
+    container.case_repo.create_case(case)
+
+    event = {
+        "httpMethod": "POST",
+        "path": f"/api/cases/{case_id}/approve",
+        "pathParameters": {"id": case_id},
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "sub": "usr_cognito_operator",
+                    "custom:tenant_id": org_id,
+                    "custom:role": "OPERATOR",
+                    "email": "operator@enterprise.com",
+                }
+            }
+        },
+        "body": json.dumps(
+            {
+                "proposal_id": prop.proposal_id,
+                "proposal_hash": prop.proposal_hash,
+                "case_version": 1,
+            }
+        ),
+    }
+
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["status"] == "APPROVED"
+
+
+def test_security_production_viewer_cannot_mutate(monkeypatch) -> None:
+    """In production mode, Cognito VIEWER role is strictly forbidden from approving cases (HTTP 403)."""
+    monkeypatch.setenv("ARO_ENV", "prod")
+    container = ApiServiceContainer()
+
+    case_id = "case_prod_viewer_01"
+    org_id = "org_enterprise"
+    event = {
+        "httpMethod": "POST",
+        "path": f"/api/cases/{case_id}/approve",
+        "pathParameters": {"id": case_id},
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "sub": "usr_cognito_viewer",
+                    "custom:tenant_id": org_id,
+                    "custom:role": "VIEWER",
+                }
+            }
+        },
+        "body": json.dumps(
+            {
+                "proposal_id": "prop_01",
+                "proposal_hash": "hash_01",
+                "case_version": 1,
+            }
+        ),
+    }
+
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] == 403
+    assert "Unauthorized" in resp["body"]
+
+
+def test_security_production_arbitrary_actor_role_header_cannot_elevate(monkeypatch) -> None:
+    """In production mode, incoming x-actor-role header cannot elevate a Cognito VIEWER to ADMIN/OPERATOR."""
+    monkeypatch.setenv("ARO_ENV", "prod")
+    container = ApiServiceContainer()
+
+    case_id = "case_prod_spoof_01"
+    org_id = "org_enterprise"
+    event = {
+        "httpMethod": "POST",
+        "path": f"/api/cases/{case_id}/approve",
+        "pathParameters": {"id": case_id},
+        "headers": {
+            "x-actor-role": "ADMIN",
+            "x-user-role": "OPERATOR",
+            "x-actor-id": "spoofed_admin",
+        },
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "sub": "usr_cognito_viewer",
+                    "custom:tenant_id": org_id,
+                    "custom:role": "VIEWER",
+                }
+            }
+        },
+        "body": json.dumps(
+            {
+                "proposal_id": "prop_01",
+                "proposal_hash": "hash_01",
+                "case_version": 1,
+            }
+        ),
+    }
+
+    # Must reject with 403 because authoritative Cognito claim is VIEWER
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] == 403
+    assert "Unauthorized" in resp["body"]
+
+
+def test_security_production_unauthenticated_request_cannot_use_headers(monkeypatch) -> None:
+    """In production mode, requests without Cognito claims cannot authenticate using simulated headers (HTTP 401)."""
+    monkeypatch.setenv("ARO_ENV", "prod")
+    container = ApiServiceContainer()
+
+    case_id = "case_prod_unauth_01"
+    event = {
+        "httpMethod": "POST",
+        "path": f"/api/cases/{case_id}/approve",
+        "pathParameters": {"id": case_id},
+        "headers": {
+            "x-actor-role": "OPERATOR",
+            "x-actor-id": "hacker_operator",
+            "x-tenant-id": "org_target",
+        },
+        # No requestContext or authorizer claims
+        "body": json.dumps(
+            {
+                "proposal_id": "prop_01",
+                "proposal_hash": "hash_01",
+                "case_version": 1,
+            }
+        ),
+    }
+
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] == 401
+    assert "Unauthenticated" in resp["body"]
+
+
+def test_security_production_tenant_identity_cannot_be_spoofed_via_headers(monkeypatch) -> None:
+    """In production mode, Cognito custom:tenant_id is authoritative; client cannot spoof another tenant via headers."""
+    monkeypatch.setenv("ARO_ENV", "prod")
+    container = ApiServiceContainer()
+
+    # Victim case belongs to org_victim
+    victim_case = Case(
+        case_id="case_victim_01",
+        organization_id="org_victim",
+        location_id="loc_hq",
+        device_id="dev_01",
+        event_id="evt_01",
+        title="Victim Incident",
+        status=CaseStatus.APPROVAL_PENDING,
+        version=1,
+    )
+    container.case_repo.create_case(victim_case)
+
+    # Attacker authenticated to org_attacker attempts to read victim case by providing header
+    event = {
+        "httpMethod": "GET",
+        "path": "/api/cases/case_victim_01",
+        "pathParameters": {"id": "case_victim_01"},
+        "headers": {
+            "x-tenant-id": "org_victim",
+            "x-organization-id": "org_victim",
+        },
+        "requestContext": {
+            "authorizer": {
+                "claims": {
+                    "sub": "usr_attacker",
+                    "custom:tenant_id": "org_attacker",
+                    "custom:role": "OPERATOR",
+                }
+            }
+        },
+    }
+
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] in {403, 404}
+
+
+def test_security_local_demo_simulated_headers_permitted_in_demo_mode(monkeypatch) -> None:
+    """In explicitly local/demo mode (ARO_ENV=demo), simulated actor headers remain permitted for offline testing."""
+    monkeypatch.setenv("ARO_ENV", "demo")
+    container = ApiServiceContainer()
+
+    case_id = "case_demo_sim_01"
+    org_id = "org_demo_local"
+    h = calculate_proposal_hash(
+        case_id=case_id,
+        action_type=ActionType.NOTIFY_OPERATOR,
+        reason="Demo test verification",
+        parameters={"message": "Staff alert", "urgency": "normal"},
+    )
+    prop = Proposal(
+        proposal_id="prop_demo_01",
+        case_id=case_id,
+        action_type=ActionType.NOTIFY_OPERATOR,
+        reason="Demo test verification",
+        parameters={"message": "Staff alert", "urgency": "normal"},
+        proposal_hash=h,
+    )
+    container.proposal_repo.save_proposal(prop, org_id)
+
+    case = Case(
+        case_id=case_id,
+        organization_id=org_id,
+        location_id="loc_demo",
+        device_id="dev_demo",
+        event_id="evt_demo",
+        title="Demo Incident",
+        status=CaseStatus.APPROVAL_PENDING,
+        version=1,
+        active_proposal_id=prop.proposal_id,
+    )
+    container.case_repo.create_case(case)
+
+    event = {
+        "httpMethod": "POST",
+        "path": f"/api/cases/{case_id}/approve",
+        "pathParameters": {"id": case_id},
+        "headers": {
+            "x-actor-id": "demo_operator_01",
+            "x-tenant-id": org_id,
+            "x-actor-role": "OPERATOR",
+        },
+        "body": json.dumps(
+            {
+                "proposal_id": prop.proposal_id,
+                "proposal_hash": prop.proposal_hash,
+                "case_version": 1,
+            }
+        ),
+    }
+
+    resp = handle_api_request(event, container=container)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["status"] == "APPROVED"

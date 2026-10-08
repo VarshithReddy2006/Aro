@@ -23,7 +23,8 @@ from infra.stacks import (
 
 def main() -> None:
     app = App()
-    config = load_config()
+    env_context = app.node.try_get_context("env")
+    config = load_config(env_context)
 
     env_tags = {
         "Project": "Aro",

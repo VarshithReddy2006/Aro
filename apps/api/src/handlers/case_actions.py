@@ -8,6 +8,7 @@ Follows AWS API Gateway Lambda Proxy integration standards:
 
 import json
 import logging
+import os
 from typing import Any
 
 from packages.contracts.enums import Role
@@ -47,32 +48,89 @@ def _json_response(status_code: int, body_dict: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _extract_user_and_case(event: dict[str, Any]) -> tuple[User, str, dict[str, Any]]:
+def _extract_user_and_case(
+    event: dict[str, Any], user: User | None = None
+) -> tuple[User, str, dict[str, Any]]:
     # Extract case_id from path parameters
     path_params = event.get("pathParameters") or {}
     case_id = path_params.get("id") or path_params.get("case_id") or ""
     if not case_id:
         raise ValueError("Missing 'case_id' in path parameters")
 
-    # Extract headers (case-insensitive lookup)
-    raw_headers = event.get("headers") or {}
-    headers = {k.lower(): str(v) for k, v in raw_headers.items()}
+    if user is None:
+        req_context = event.get("requestContext") or {}
+        auth_ctx = req_context.get("authorizer") or {}
+        claims = auth_ctx.get("claims") or {}
+        is_demo_mode = os.environ.get("ARO_ENV", "demo").strip().lower() in {
+            "demo",
+            "local",
+            "test",
+        }
 
-    user_id = headers.get("x-user-id", "usr_ops_default")
-    org_id = headers.get("x-organization-id", "org_default")
-    role_str = headers.get("x-user-role", Role.OPERATOR.value).upper()
-    try:
-        role = Role(role_str)
-    except ValueError:
-        role = Role.OPERATOR
+        if claims and (claims.get("sub") or claims.get("cognito:username")):
+            user_id = str(claims.get("sub") or claims.get("cognito:username"))
+            org_id = claims.get("custom:tenant_id") or claims.get("custom:organization_id")
+            if not org_id:
+                raise ValueError("Cognito authorizer claims missing tenant identity")
+            email = str(claims.get("email", f"{user_id}@aro.internal"))
+            role_claim = claims.get("custom:role")
+            groups_claim = claims.get("cognito:groups", [])
+            if isinstance(groups_claim, str):
+                groups = [
+                    g.strip().upper()
+                    for g in groups_claim.replace("[", "").replace("]", "").split(",")
+                    if g.strip()
+                ]
+            elif isinstance(groups_claim, list):
+                groups = [str(g).upper() for g in groups_claim]
+            else:
+                groups = []
 
-    user = User(
-        user_id=user_id,
-        organization_id=org_id,
-        email=f"{user_id}@aro.internal",
-        name="Operator",
-        role=role,
-    )
+            if role_claim:
+                try:
+                    role = Role(str(role_claim).upper())
+                except ValueError:
+                    role = Role.VIEWER
+            elif "ADMIN" in groups:
+                role = Role.ADMIN
+            elif "OPERATOR" in groups:
+                role = Role.OPERATOR
+            else:
+                role = Role.VIEWER
+
+            user = User(
+                user_id=user_id,
+                organization_id=str(org_id),
+                email=email,
+                name="Aro Authenticated User",
+                role=role,
+            )
+        elif not is_demo_mode:
+            raise ValueError(
+                "Production authentication required: Request lacks valid Cognito authorizer claims."
+            )
+        else:
+            # Extract headers for isolated local/demo execution
+            raw_headers = event.get("headers") or {}
+            headers = {k.lower(): str(v) for k, v in raw_headers.items()}
+
+            user_id = headers.get("x-user-id") or headers.get("x-actor-id") or "usr_ops_default"
+            org_id = headers.get("x-tenant-id") or headers.get("x-organization-id") or "org_default"
+            role_str = (
+                headers.get("x-user-role") or headers.get("x-actor-role") or Role.OPERATOR.value
+            ).upper()
+            try:
+                role = Role(role_str)
+            except ValueError:
+                role = Role.OPERATOR
+
+            user = User(
+                user_id=user_id,
+                organization_id=org_id,
+                email=f"{user_id}@aro.internal",
+                name="Operator",
+                role=role,
+            )
 
     # Parse body
     raw_body = event.get("body") or "{}"
@@ -93,13 +151,14 @@ def handle_approve_case(
     event: dict[str, Any],
     context: Any = None,
     service: ApprovalService | None = None,
+    user: User | None = None,
 ) -> dict[str, Any]:
     """HTTP handler for POST /api/cases/{id}/approve."""
     if service is None:
         return _json_response(500, {"error": "ApprovalService not configured"})
 
     try:
-        user, case_id, body = _extract_user_and_case(event)
+        resolved_user, case_id, body = _extract_user_and_case(event, user=user)
     except ValueError as exc:
         return _json_response(400, {"error": str(exc)})
 
@@ -121,7 +180,7 @@ def handle_approve_case(
             case_id=case_id,
             proposal_id=str(proposal_id),
             proposal_hash=str(proposal_hash),
-            user=user,
+            user=resolved_user,
             expected_case_version=int(case_version),
             expires_at=str(expires_at) if expires_at else None,
         )
@@ -152,13 +211,14 @@ def handle_reject_case(
     event: dict[str, Any],
     context: Any = None,
     service: ApprovalService | None = None,
+    user: User | None = None,
 ) -> dict[str, Any]:
     """HTTP handler for POST /api/cases/{id}/reject."""
     if service is None:
         return _json_response(500, {"error": "ApprovalService not configured"})
 
     try:
-        user, case_id, body = _extract_user_and_case(event)
+        resolved_user, case_id, body = _extract_user_and_case(event, user=user)
     except ValueError as exc:
         return _json_response(400, {"error": str(exc)})
 
@@ -180,7 +240,7 @@ def handle_reject_case(
             case_id=case_id,
             proposal_id=str(proposal_id),
             proposal_hash=str(proposal_hash),
-            user=user,
+            user=resolved_user,
             reason=str(reason),
             expected_case_version=int(case_version),
         )
@@ -209,13 +269,14 @@ def handle_execute_case(
     event: dict[str, Any],
     context: Any = None,
     executor: ActionExecutor | None = None,
+    user: User | None = None,
 ) -> dict[str, Any]:
     """HTTP handler for POST /api/cases/{id}/execute."""
     if executor is None:
         return _json_response(500, {"error": "ActionExecutor not configured"})
 
     try:
-        user, case_id, body = _extract_user_and_case(event)
+        resolved_user, case_id, body = _extract_user_and_case(event, user=user)
     except ValueError as exc:
         return _json_response(400, {"error": str(exc)})
 
@@ -233,7 +294,7 @@ def handle_execute_case(
         result = executor.execute_action(
             case_id=case_id,
             approval_id=str(approval_id),
-            user=user,
+            user=resolved_user,
             expected_case_version=int(case_version),
             idempotency_key=str(idempotency_key) if idempotency_key else None,
         )

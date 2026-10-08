@@ -86,52 +86,95 @@ def _response(status_code: int, body_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_authenticated_user(event: dict[str, Any]) -> User:
-    """Extract authenticated actor identity from Cognito authorizer or trusted headers."""
-    # 1. Check Cognito Authorizer Claims
+    """Extract authenticated actor identity with strict production / local isolation.
+
+    PRODUCTION PATH:
+      Requires verified Cognito Authorizer claims in requestContext.authorizer.claims.
+      Cognito claims are authoritative for user_id, organization_id, and role.
+      Client headers (x-actor-role, x-actor-id, x-user-role, x-user-id, x-tenant-id,
+      x-organization-id) are NEVER trusted or consulted in production.
+
+    LOCAL/DEMO PATH:
+      Permitted ONLY when ARO_ENV is in {"demo", "local", "test"}.
+      If Cognito claims are absent, simulated headers are used for offline test/demo execution.
+      If Cognito claims ARE present in demo mode, they remain strictly authoritative.
+    """
     req_context = event.get("requestContext") or {}
     auth_ctx = req_context.get("authorizer") or {}
     claims = auth_ctx.get("claims") or {}
 
-    user_id = claims.get("sub") or claims.get("cognito:username")
-    org_id = claims.get("custom:organization_id")
-    email = claims.get("email", "")
+    is_demo_mode = os.environ.get("ARO_ENV", "demo").strip().lower() in {"demo", "local", "test"}
 
-    # Role derivation from Cognito groups
-    groups_claim = claims.get("cognito:groups", [])
-    if isinstance(groups_claim, str):
-        groups = [
-            g.strip().upper() for g in groups_claim.replace("[", "").replace("]", "").split(",")
-        ]
-    elif isinstance(groups_claim, list):
-        groups = [str(g).upper() for g in groups_claim]
-    else:
-        groups = []
+    # 1. Authoritative Cognito Authorizer Claims
+    if claims and (claims.get("sub") or claims.get("cognito:username")):
+        user_id = str(claims.get("sub") or claims.get("cognito:username"))
+        org_id = claims.get("custom:tenant_id") or claims.get("custom:organization_id")
+        if not org_id:
+            raise ValueError("Cognito authorizer claims missing tenant identity (custom:tenant_id)")
 
-    role = Role.VIEWER
-    if "ADMIN" in groups:
-        role = Role.ADMIN
-    elif "OPERATOR" in groups:
+        email = str(claims.get("email", f"{user_id}@aro.internal"))
+
+        # Role derivation strictly from Cognito claims (never headers)
+        role_claim = claims.get("custom:role")
+        groups_claim = claims.get("cognito:groups", [])
+        if isinstance(groups_claim, str):
+            groups = [
+                g.strip().upper()
+                for g in groups_claim.replace("[", "").replace("]", "").split(",")
+                if g.strip()
+            ]
+        elif isinstance(groups_claim, list):
+            groups = [str(g).upper() for g in groups_claim]
+        else:
+            groups = []
+
+        if role_claim:
+            try:
+                role = Role(str(role_claim).upper())
+            except ValueError:
+                role = Role.VIEWER
+        elif "ADMIN" in groups:
+            role = Role.ADMIN
+        elif "OPERATOR" in groups:
+            role = Role.OPERATOR
+        else:
+            role = Role.VIEWER
+
+        return User(
+            user_id=user_id,
+            organization_id=str(org_id),
+            email=email,
+            name="Aro Authenticated User",
+            role=role,
+        )
+
+    # 2. Production Rejection: Production requests MUST have valid Cognito claims
+    if not is_demo_mode:
+        raise ValueError(
+            "Production authentication required: Request lacks valid Cognito authorizer claims."
+        )
+
+    # 3. Local/Demo Simulated Adapter Path (Isolated to local/demo/test environment)
+    raw_headers = event.get("headers") or {}
+    headers = {k.lower(): str(v) for k, v in raw_headers.items()}
+
+    user_id = headers.get("x-user-id") or headers.get("x-actor-id") or "usr_demo_operator"
+    org_id = headers.get("x-tenant-id") or headers.get("x-organization-id") or "org_demo"
+    role_header = (
+        headers.get("x-user-role") or headers.get("x-actor-role") or Role.OPERATOR.value
+    ).upper()
+    try:
+        role = Role(role_header)
+    except ValueError:
         role = Role.OPERATOR
 
-    # 2. Fallback to headers for demo/local test environments if no Cognito claims
-    if not user_id:
-        raw_headers = event.get("headers") or {}
-        headers = {k.lower(): str(v) for k, v in raw_headers.items()}
-
-        user_id = headers.get("x-user-id", "usr_ops_default")
-        org_id = org_id or headers.get("x-organization-id", "org_default")
-        role_header = headers.get("x-user-role", Role.OPERATOR.value).upper()
-        try:
-            role = Role(role_header)
-        except ValueError:
-            role = Role.OPERATOR
-        email = f"{user_id}@aro.internal"
+    email = f"{user_id}@aro.internal"
 
     return User(
         user_id=user_id,
-        organization_id=org_id or "org_default",
-        email=email or f"{user_id}@aro.internal",
-        name="Aro Operator",
+        organization_id=org_id,
+        email=email,
+        name="Aro Demo Operator",
         role=role,
     )
 
@@ -282,17 +325,17 @@ def handle_api_request(
         # 3. POST /api/cases/{id}/approve
         if case_id and path.endswith("/approve") and http_method == "POST":
             _check_operator_or_admin(user)
-            return handle_approve_case(event, context, service=services.approval_service)
+            return handle_approve_case(event, context, service=services.approval_service, user=user)
 
         # 4. POST /api/cases/{id}/reject
         if case_id and path.endswith("/reject") and http_method == "POST":
             _check_operator_or_admin(user)
-            return handle_reject_case(event, context, service=services.approval_service)
+            return handle_reject_case(event, context, service=services.approval_service, user=user)
 
         # 5. POST /api/cases/{id}/execute
         if case_id and path.endswith("/execute") and http_method == "POST":
             _check_operator_or_admin(user)
-            return handle_execute_case(event, context, executor=services.action_executor)
+            return handle_execute_case(event, context, executor=services.action_executor, user=user)
 
         # 6. GET /api/cases/{id}/timeline
         if case_id and path.endswith("/timeline") and http_method == "GET":

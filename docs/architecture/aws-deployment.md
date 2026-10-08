@@ -148,7 +148,7 @@ Rather than creating dozens of trivial Lambdas, Aro uses 3 cohesive functions:
    - Enforces 256KB size limit and timestamp replay boundaries (300s window).
    - Records raw event to DynamoDB and emits event notification to EventBridge.
 2. **Worker Lambda** (`AroWorkerFunction-{env}`):
-   - Triggered by EventBridge events (`source: aro.ring`, `detail-type: RingEventReceived`).
+   - Triggered by EventBridge events (`source: aro.events`, `detail-type: RingEventReceived`).
    - Normalizes event, performs windowed event correlation.
    - Assembles deterministic context (business hours, expected delivery, designated entrance).
    - Generates bounded AI operational brief via Amazon Bedrock (with automatic fallback to deterministic brief generator on error/timeout).
@@ -164,7 +164,7 @@ Rather than creating dozens of trivial Lambdas, Aro uses 3 cohesive functions:
 ## 7. EventBridge
 
 Asynchronous decoupling is provided by a custom event bus (`aro-events-{env}`):
-- **Source**: `aro.ring`
+- **Source**: `aro.events`
 - **Detail Type**: `RingEventReceived`
 - **Payload Shape**: Contains event identifiers (`event_id`, `device_id`, `organization_id`, `event_type`) rather than huge raw payloads. Workers query authoritative state from DynamoDB.
 - **Tenant Validation**: The worker verifies tenant ownership and event existence before processing.
@@ -259,30 +259,115 @@ The local demo workflow runs completely without AWS credentials or network acces
 
 ---
 
-## 16. Deployment Commands
+## 16. Deployment Lifecycle & Readiness Runbook
 
-### Prerequisites
-- Node.js 20+ and AWS CDK CLI (`npm install -g aws-cdk`)
+> [!IMPORTANT]
+> **Deployment Status**: Infrastructure code has been synthesized, diffed, and validated against contract tests. Actual AWS deployment has **NOT** been performed. This section serves as the deployment readiness runbook.
+
+### Step 1: AWS Prerequisites
+- Node.js 20+ and AWS CDK CLI v2 (`npm install -g aws-cdk`)
 - Python 3.12 with dependencies: `pip install -e ".[dev]" aws-cdk-lib constructs`
-- Configured AWS credentials with appropriate deployment permissions.
+- Configured AWS credentials (`aws configure`) with scoped administrative permissions for CloudFormation, IAM, Lambda, API Gateway, DynamoDB, EventBridge, Cognito, S3, CloudFront, and SSM.
 
-### Synthesis & Review
+### Step 2: Environment Configuration
+Copy environment configuration and select target environment:
 ```bash
-# Synthesize CloudFormation templates for demo environment
+cp .env.example .env
+# Set ARO_ENV=dev or ARO_ENV=prod
+```
+
+### Step 3: SSM Secret Configuration
+Before deploying the compute stack, the Ring webhook signing secret must be stored in SSM Parameter Store:
+```bash
+aws ssm put-parameter \
+  --name "/aro/dev/ring/webhook-secret" \
+  --type "SecureString" \
+  --value "your_actual_hmac_secret_here" \
+  --overwrite
+```
+
+### Step 4: Cognito Setup
+The `AroApiStack` creates the Cognito User Pool and App Client automatically with custom attributes:
+- `custom:tenant_id`
+- `custom:role` (ADMIN, OPERATOR, VIEWER)
+
+To create an initial operator user after stack deployment:
+```bash
+aws cognito-idp admin-create-user \
+  --user-pool-id <UserPoolId> \
+  --username operator@acme-facility.com \
+  --user-attributes Name=email,Value=operator@acme-facility.com Name=email_verified,Value=true Name=custom:tenant_id,Value=org_demo Name=custom:role,Value=OPERATOR \
+  --message-action SUPPRESS
+
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <UserPoolId> \
+  --username operator@acme-facility.com \
+  --password "TemporaryPassword123!" \
+  --permanent
+```
+
+### Step 5: CDK Bootstrap
+If the target AWS region has not been bootstrapped for AWS CDK v2:
+```bash
+cdk bootstrap aws://<ACCOUNT_ID>/<REGION>
+```
+
+### Step 6: Backend Deployment Commands
+```bash
+# Review synth templates
 npx aws-cdk synth
 
-# Inspect changes against an active environment
+# Inspect changes
 cdk diff -c env=dev
-```
 
-### Deployment (Targeted Environment)
-```bash
-# Deploy dev environment
+# Deploy all stacks to dev
 cdk deploy --all -c env=dev --require-approval broadening
-
-# Deploy production environment (requires explicit stack review)
-cdk deploy --all -c env=prod --require-approval broadening
 ```
+
+### Step 7: Frontend Build & Deployment
+After API Gateway is deployed, configure the frontend with the deployed API Gateway endpoint:
+```bash
+cd apps/web
+# Set VITE_API_BASE_URL to the API Gateway URL output by AroApiStack
+npm install
+npm run build
+
+# Deploy assets to the S3 bucket created by AroFrontendStack
+aws s3 sync dist/ s3://<AroFrontendBucketName>/ --delete
+
+# Invalidate CloudFront cache
+aws cloudfront create-invalidation --distribution-id <DistributionId> --paths "/*"
+```
+
+### Step 8: Post-Deployment Smoke Tests
+Execute smoke tests against deployed endpoints:
+1. **Health Check**:
+   ```bash
+   curl -i https://<api-id>.execute-api.<region>.amazonaws.com/dev/health
+   # Expected: HTTP 200 {"status": "HEALTHY", "service": "aro-api", ...}
+   ```
+2. **Webhook Rejection on Invalid Signature**:
+   ```bash
+   curl -i -X POST https://<api-id>.execute-api.<region>.amazonaws.com/dev/webhooks/ring \
+     -H "x-signature: invalid_hex_sig" \
+     -H "x-timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     -H "Content-Type: application/json" \
+     -d '{"event_id": "test_evt"}'
+   # Expected: HTTP 401 Unauthorized
+   ```
+3. **Cognito RBAC Authorization**:
+   ```bash
+   curl -i -X GET https://<api-id>.execute-api.<region>.amazonaws.com/dev/api/cases \
+     -H "Authorization: Bearer <valid_operator_jwt>"
+   # Expected: HTTP 200 {"cases": [...], "count": ...}
+   ```
+
+### Step 9: Teardown Procedure
+When dismantling non-production environments:
+```bash
+cdk destroy --all -c env=dev --force
+```
+In `dev` and `demo`, DynamoDB and S3 buckets are configured with `DESTROY` removal policy. In `prod`, DynamoDB and S3 are retained to protect audit trails.
 
 ---
 
@@ -297,7 +382,7 @@ cdk deploy --all -c env=prod --require-approval broadening
 ## 18. Security Boundaries Summary
 
 1. **Ring Webhook Boundary**: Raw body HMAC-SHA256 verification + 300s replay prevention window + 256KB max size limit.
-2. **Cognito / API Gateway Boundary**: Authenticated JWT token validation with server-authoritative role extraction.
+2. **Cognito / API Gateway Boundary**: Authenticated JWT token validation with server-authoritative role and tenant claims extraction (`sub`, `custom:tenant_id`, `custom:role`). In deployed production mode, arbitrary client headers (`x-actor-role`, `x-actor-id`, `x-tenant-id`) are strictly rejected/ignored; simulated actor headers are isolated exclusively to local/demo test execution.
 3. **Operator Approval Boundary**: Human approval strictly required before any operational action can be executed.
 4. **Cryptographic Binding**: Execution verifies proposal hash matching SHA-256 canonical digest and case version.
 5. **Deterministic Executor**: Only allowlisted actions (`NOTIFY_OPERATOR`, `MARK_FOR_REVIEW`, `RECORD_NO_ACTION`) can be processed; arbitrary tool execution is structurally impossible.

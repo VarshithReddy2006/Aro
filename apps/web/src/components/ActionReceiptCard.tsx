@@ -21,6 +21,9 @@ export const ActionReceiptCard: React.FC<ActionReceiptCardProps> = ({ action }) 
     <div className="card" style={{ borderColor: isCompleted ? "var(--status-completed-border)" : "var(--border-subtle)" }}>
       <div className="card-header">
         <h2 className="card-title">
+          <span style={{ color: "#34d399", marginRight: "8px", fontSize: "0.75rem", padding: "2px 6px", background: "rgba(52, 211, 153, 0.15)", borderRadius: "4px", border: "1px solid rgba(52, 211, 153, 0.3)" }}>
+            EXECUTION RESULT
+          </span>
           <span>Deterministic Action Receipt</span>
         </h2>
         <StatusBadge status={action.status} />

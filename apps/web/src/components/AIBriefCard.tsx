@@ -54,7 +54,7 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({ brief }) => {
 
       <div style={{ marginBottom: "16px" }}>
         <h3 style={{ fontSize: "0.8125rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>
-          Operational Summary
+          AI-GENERATED SUMMARY
         </h3>
         <p style={{ fontSize: "0.9375rem", color: "var(--text-primary)", lineHeight: 1.6 }}>
           {brief.summary}
@@ -65,7 +65,7 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({ brief }) => {
         {/* Identified Facts in Brief */}
         <div style={{ background: "var(--bg-surface)", padding: "12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
           <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#34d399", textTransform: "uppercase", marginBottom: "8px" }}>
-            Validated Facts
+            KNOWN FACTS
           </div>
           <ul style={{ listStyle: "none", fontSize: "0.8125rem", color: "var(--text-secondary)", display: "flex", flexDirection: "column", gap: "4px" }}>
             {brief.facts.map((fact, index) => (
@@ -80,7 +80,7 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({ brief }) => {
         {/* Highlighted Unknowns in Brief */}
         <div style={{ background: "var(--bg-surface)", padding: "12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)" }}>
           <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", marginBottom: "8px" }}>
-            Operational Ambiguities
+            UNKNOWN INFORMATION
           </div>
           <ul style={{ listStyle: "none", fontSize: "0.8125rem", color: "var(--text-secondary)", display: "flex", flexDirection: "column", gap: "4px" }}>
             {brief.unknowns.map((unknown, index) => (

@@ -1,12 +1,14 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 import { Role } from "../types/contracts";
+import { apiClient } from "../api/client";
 
 interface AppShellProps {
   children: React.ReactNode;
   currentRole: Role;
   onRoleChange: (role: Role) => void;
   isDemoMode?: boolean;
+  onResetDemo?: () => void;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({
@@ -14,7 +16,17 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentRole,
   onRoleChange,
   isDemoMode = true,
+  onResetDemo,
 }) => {
+  const handleReset = () => {
+    if (onResetDemo) {
+      onResetDemo();
+    } else {
+      apiClient.resetDemoData();
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="app-container">
       {/* Navigation Sidebar */}
@@ -81,9 +93,21 @@ export const AppShell: React.FC<AppShellProps> = ({
 
           <div className="header-right">
             {isDemoMode && (
-              <div className="demo-pill" title="Running in deterministic demo mode with synthetic events">
-                <span className="demo-indicator" aria-hidden="true" />
-                <span>Demo Mode (demo_synthetic)</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div className="demo-pill" title="Running in deterministic demo mode with synthetic events">
+                  <span className="demo-indicator" aria-hidden="true" />
+                  <span>Demo Mode (demo_synthetic)</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: "0.75rem", padding: "4px 8px" }}
+                  onClick={handleReset}
+                  title="Reset all demo cases and state to initial deterministic demo scenario"
+                  aria-label="Reset Demo Scenario"
+                >
+                  Reset Demo Scenario
+                </button>
               </div>
             )}
 

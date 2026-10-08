@@ -338,3 +338,90 @@ def test_frontend_stack_cdn(cdk_app: App, demo_config: AroConfig) -> None:
             )
         },
     )
+
+
+# ==============================================================================
+# PHASE 8.1 REGRESSION TESTS: SSM CANONICALIZATION & EVENT TRANSPORT
+# ==============================================================================
+def test_ssm_parameter_canonical_naming_across_environments(cdk_app: App) -> None:
+    """Verify canonical parameter name /aro/{env}/ring/webhook-secret across all environments."""
+    demo_cfg = load_config("demo")
+    dev_cfg = load_config("dev")
+    prod_cfg = load_config("prod")
+
+    assert demo_cfg.ring_secret_param_name == "/aro/demo/ring/webhook-secret"
+    assert dev_cfg.ring_secret_param_name == "/aro/dev/ring/webhook-secret"
+    assert prod_cfg.ring_secret_param_name == "/aro/prod/ring/webhook-secret"
+
+    # Verify ComputeStack generates the exact canonical parameter name
+    storage = StorageStack(cdk_app, "TestStorageSsmRef", config=dev_cfg)
+    events = EventsStack(cdk_app, "TestEventsSsmRef", config=dev_cfg)
+    compute = ComputeStack(
+        cdk_app,
+        "TestComputeSsmStack",
+        config=dev_cfg,
+        table=storage.table,
+        evidence_bucket=storage.evidence_bucket,
+        event_bus=events.event_bus,
+    )
+    template = Template.from_stack(compute)
+
+    template.has_resource_properties(
+        "AWS::SSM::Parameter",
+        {
+            "Name": "/aro/dev/ring/webhook-secret",
+            "Type": "String",
+        },
+    )
+
+    # Ingest Lambda environment variable references the canonical SSM parameter
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "FunctionName": f"aro-ingest-{dev_cfg.env_name}",
+            "Environment": {
+                "Variables": Match.object_like(
+                    {
+                        "RING_SECRET_PARAM": Match.object_like(
+                            {"Ref": Match.string_like_regexp("RingWebhookSecretParam.*")}
+                        ),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_eventbridge_worker_delivery_and_no_sqs_infrastructure(cdk_app: App) -> None:
+    """Verify EventBridge is the sole worker transport and zero SQS infrastructure is provisioned."""
+    prod_cfg = load_config("prod")
+    storage = StorageStack(cdk_app, "TestStorageEventRef", config=prod_cfg)
+    events = EventsStack(cdk_app, "TestEventsEventRef", config=prod_cfg)
+    compute = ComputeStack(
+        cdk_app,
+        "TestComputeEventStack",
+        config=prod_cfg,
+        table=storage.table,
+        evidence_bucket=storage.evidence_bucket,
+        event_bus=events.event_bus,
+    )
+
+    storage_tmpl = Template.from_stack(storage)
+    events_tmpl = Template.from_stack(events)
+    compute_tmpl = Template.from_stack(compute)
+
+    # 1. EventBridge Rule routes events to Worker Lambda
+    compute_tmpl.has_resource_properties(
+        "AWS::Events::Rule",
+        {
+            "EventPattern": {
+                "source": ["aro.events"],
+                "detail-type": ["RingEventReceived", "CaseCreated", "BriefRequested"],
+            }
+        },
+    )
+
+    # 2. Strict verification: ZERO SQS resources exist in any stack
+    assert storage_tmpl.find_resources("AWS::SQS::Queue") == {}
+    assert events_tmpl.find_resources("AWS::SQS::Queue") == {}
+    assert compute_tmpl.find_resources("AWS::SQS::Queue") == {}
