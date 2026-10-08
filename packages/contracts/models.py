@@ -15,6 +15,7 @@ from .enums import (
     ActionType,
     AuditEventType,
     CaseStatus,
+    EventProcessingStatus,
     ExpectedDeliveryStatus,
     Provenance,
     Role,
@@ -129,6 +130,22 @@ class RingEvent(BaseModel):
     provenance: Provenance = Field(..., description="Verified provenance of event data")
     payload: dict[str, Any] = Field(
         default_factory=dict, description="Raw event payload parameters"
+    )
+    received_at: str = Field(
+        default_factory=_utc_now_iso, description="ISO 8601 timestamp when webhook was received"
+    )
+    signature_verified: bool = Field(
+        default=True, description="Whether the event passed cryptographic HMAC verification"
+    )
+    processing_status: EventProcessingStatus = Field(
+        default=EventProcessingStatus.RECEIVED, description="Ingestion processing lifecycle status"
+    )
+    quarantine_reason: str | None = Field(
+        default=None,
+        description="Reason if event was signed but quarantined due to malformed payload",
+    )
+    case_id: str | None = Field(
+        default=None, description="Associated case identifier once correlated"
     )
 
 

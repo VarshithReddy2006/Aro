@@ -33,6 +33,7 @@ from packages.contracts.enums import (
     ActionType,
     AuditEventType,
     CaseStatus,
+    EventProcessingStatus,
     Provenance,
 )
 from packages.contracts.models import (
@@ -157,7 +158,16 @@ class MockDynamoDBTable:
         if ":executing_status" in values:
             item["status"] = values[":executing_status"]
         elif ":status" in values:
-            item["status"] = values[":status"]
+            if "processing_status" in UpdateExpression:
+                item["processing_status"] = values[":status"]
+            else:
+                item["status"] = values[":status"]
+        if ":reason" in values:
+            item["quarantine_reason"] = values[":reason"]
+        if ":case_id" in values:
+            item["case_id"] = values[":case_id"]
+        if ":gsi1pk" in values:
+            item["GSI1PK"] = values[":gsi1pk"]
         if ":new_version" in values:
             item["version"] = values[":new_version"]
         if ":updated_at" in values:
@@ -236,13 +246,33 @@ def test_dynamodb_event_and_dedup():
         event_type="motion",
         occurred_at="2026-10-08T22:00:00Z",
         provenance=Provenance.RING_SIGNED,
-        payload={},
+        payload={"sensor": "front_door"},
     )
-    repo.save_ring_event(event, case_id="c_ddb_01")
+    # 1. Saved without requiring case_id
+    saved = repo.save_ring_event(event)
+    assert saved.event_id == "evt_ddb_1"
+    assert saved.case_id is None
 
+    # Retrieve independently
+    retrieved = repo.get_ring_event("evt_ddb_1")
+    assert retrieved is not None
+    assert retrieved.event_id == "evt_ddb_1"
+    assert retrieved.payload == {"sensor": "front_door"}
+
+    # Deduplication check
     assert repo.record_webhook_dedup("req_ddb_1", "evt_ddb_1") is True
     # Duplicate returns False
     assert repo.record_webhook_dedup("req_ddb_1", "evt_ddb_1") is False
+
+    # Quarantine update
+    quarantined = repo.quarantine_event("evt_ddb_1", "Malformed payload fields")
+    assert quarantined.processing_status == EventProcessingStatus.QUARANTINED
+    assert quarantined.quarantine_reason == "Malformed payload fields"
+
+    # Correlation update
+    correlated = repo.correlate_event_to_case("evt_ddb_1", "c_ddb_99")
+    assert correlated.case_id == "c_ddb_99"
+    assert correlated.processing_status == EventProcessingStatus.CORRELATED
 
 
 def test_dynamodb_action_lock_and_completion():

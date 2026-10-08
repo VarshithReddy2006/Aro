@@ -1,4 +1,4 @@
-"""DynamoDB single-table implementation of EventRepository."""
+"""DynamoDB single-table implementation of EventRepository supporting pre-case storage and correlation."""
 
 import time
 from typing import Any
@@ -6,14 +6,20 @@ from typing import Any
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from packages.contracts.enums import EventProcessingStatus
 from packages.contracts.models import NormalizedEvent, RingEvent
 
+from ..errors import (
+    ConflictError,
+    NotFoundError,
+)
 from .base import (
     clean_dynamodb_dict,
     format_case_pk,
     format_dedup_ring_pk,
-    format_event_sk,
+    format_event_pk,
     format_norm_event_sk,
+    format_raw_event_sk,
     map_client_error,
 )
 
@@ -24,31 +30,37 @@ class DynamoDBEventRepository:
     def __init__(self, table: Any) -> None:
         self._table = table
 
-    def save_ring_event(self, event: RingEvent, case_id: str | None = None) -> RingEvent:
-        pk = format_case_pk(case_id or event.event_id)
-        sk = format_event_sk(event.event_id)
+    def save_ring_event(self, event: RingEvent) -> RingEvent:
+        """Persist an authenticated raw Ring event prior to case correlation."""
+        pk = format_event_pk(event.event_id)
+        sk = format_raw_event_sk()
 
         item = clean_dynamodb_dict(event.model_dump())
         item.update(
             {
                 "PK": pk,
                 "SK": sk,
-                "GSI1PK": f"DEVICE#{event.device_id}",
-                "GSI1SK": event.occurred_at,
-                "entity_type": "RING_EVENT",
+                "GSI1PK": f"CASE#{event.case_id}" if event.case_id else f"DEVICE#{event.device_id}",
+                "GSI1SK": f"EVENT#{event.occurred_at}",
+                "entity_type": "RING_EVENT_RAW",
             }
         )
 
         try:
-            self._table.put_item(Item=item)
+            self._table.put_item(
+                Item=item,
+                ConditionExpression="attribute_not_exists(PK)",
+            )
             return event
         except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                raise ConflictError(f"Raw event '{event.event_id}' already exists.") from e
             raise map_client_error(e, "RingEvent", event.event_id) from e
 
     def get_ring_event(self, event_id: str) -> RingEvent | None:
-        # Check standard partition with event_id as case_id fallback
-        pk = format_case_pk(event_id)
-        sk = format_event_sk(event_id)
+        """Retrieve a raw Ring event by event ID."""
+        pk = format_event_pk(event_id)
+        sk = format_raw_event_sk()
 
         try:
             resp = self._table.get_item(Key={"PK": pk, "SK": sk})
@@ -65,6 +77,63 @@ class DynamoDBEventRepository:
             if k not in {"PK", "SK", "GSI1PK", "GSI1SK", "entity_type"}
         }
         return RingEvent.model_validate(data)
+
+    def quarantine_event(self, event_id: str, reason: str) -> RingEvent:
+        """Mark an authenticated but malformed Ring event as quarantined with rationale."""
+        pk = format_event_pk(event_id)
+        sk = format_raw_event_sk()
+
+        try:
+            resp = self._table.update_item(
+                Key={"PK": pk, "SK": sk},
+                UpdateExpression="SET processing_status = :status, quarantine_reason = :reason",
+                ConditionExpression="attribute_exists(PK)",
+                ExpressionAttributeValues={
+                    ":status": EventProcessingStatus.QUARANTINED.value,
+                    ":reason": reason,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            item = resp.get("Attributes", {})
+            data = {
+                k: v
+                for k, v in item.items()
+                if k not in {"PK", "SK", "GSI1PK", "GSI1SK", "entity_type"}
+            }
+            return RingEvent.model_validate(data)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                raise NotFoundError("RingEvent", event_id) from e
+            raise map_client_error(e, "RingEvent", event_id) from e
+
+    def correlate_event_to_case(self, event_id: str, case_id: str) -> RingEvent:
+        """Associate a previously ingested raw Ring event with an operational case."""
+        pk = format_event_pk(event_id)
+        sk = format_raw_event_sk()
+
+        try:
+            resp = self._table.update_item(
+                Key={"PK": pk, "SK": sk},
+                UpdateExpression="SET case_id = :case_id, processing_status = :status, GSI1PK = :gsi1pk",
+                ConditionExpression="attribute_exists(PK)",
+                ExpressionAttributeValues={
+                    ":case_id": case_id,
+                    ":status": EventProcessingStatus.CORRELATED.value,
+                    ":gsi1pk": f"CASE#{case_id}",
+                },
+                ReturnValues="ALL_NEW",
+            )
+            item = resp.get("Attributes", {})
+            data = {
+                k: v
+                for k, v in item.items()
+                if k not in {"PK", "SK", "GSI1PK", "GSI1SK", "entity_type"}
+            }
+            return RingEvent.model_validate(data)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                raise NotFoundError("RingEvent", event_id) from e
+            raise map_client_error(e, "RingEvent", event_id) from e
 
     def record_webhook_dedup(
         self, request_id: str, event_id: str, ttl_seconds: int = 86400

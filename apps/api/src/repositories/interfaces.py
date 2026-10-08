@@ -44,12 +44,20 @@ class CaseRepository(Protocol):
 class EventRepository(Protocol):
     """Persistence operations for raw and normalized physical events."""
 
-    def save_ring_event(self, event: RingEvent, case_id: str | None = None) -> RingEvent:
-        """Persist a raw Ring event."""
+    def save_ring_event(self, event: RingEvent) -> RingEvent:
+        """Persist an authenticated raw Ring event prior to case correlation."""
         ...
 
     def get_ring_event(self, event_id: str) -> RingEvent | None:
         """Retrieve a raw Ring event by event ID."""
+        ...
+
+    def quarantine_event(self, event_id: str, reason: str) -> RingEvent:
+        """Mark an authenticated but malformed Ring event as quarantined with rationale."""
+        ...
+
+    def correlate_event_to_case(self, event_id: str, case_id: str) -> RingEvent:
+        """Associate a previously ingested raw Ring event with an operational case."""
         ...
 
     def record_webhook_dedup(

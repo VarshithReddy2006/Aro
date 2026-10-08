@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
-from packages.contracts.enums import ActionStatus, CaseStatus
+from packages.contracts.enums import ActionStatus, CaseStatus, EventProcessingStatus
 from packages.contracts.models import (
     Action,
     Approval,
@@ -120,7 +120,7 @@ class InMemoryEventRepository:
         self._case_events: dict[str, list[NormalizedEvent]] = {}
         self._lock = Lock()
 
-    def save_ring_event(self, event: RingEvent, case_id: str | None = None) -> RingEvent:
+    def save_ring_event(self, event: RingEvent) -> RingEvent:
         with self._lock:
             self._ring_events[event.event_id] = deepcopy(event)
             return deepcopy(event)
@@ -129,6 +129,34 @@ class InMemoryEventRepository:
         with self._lock:
             evt = self._ring_events.get(event_id)
             return deepcopy(evt) if evt else None
+
+    def quarantine_event(self, event_id: str, reason: str) -> RingEvent:
+        with self._lock:
+            evt = self._ring_events.get(event_id)
+            if not evt:
+                raise NotFoundError("RingEvent", event_id)
+            updated = evt.model_copy(
+                update={
+                    "processing_status": EventProcessingStatus.QUARANTINED,
+                    "quarantine_reason": reason,
+                }
+            )
+            self._ring_events[event_id] = updated
+            return deepcopy(updated)
+
+    def correlate_event_to_case(self, event_id: str, case_id: str) -> RingEvent:
+        with self._lock:
+            evt = self._ring_events.get(event_id)
+            if not evt:
+                raise NotFoundError("RingEvent", event_id)
+            updated = evt.model_copy(
+                update={
+                    "case_id": case_id,
+                    "processing_status": EventProcessingStatus.CORRELATED,
+                }
+            )
+            self._ring_events[event_id] = updated
+            return deepcopy(updated)
 
     def record_webhook_dedup(
         self, request_id: str, event_id: str, ttl_seconds: int = 86400

@@ -80,3 +80,12 @@ class ActionStatus(StrEnum):
     EXECUTING = "EXECUTING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+
+
+class EventProcessingStatus(StrEnum):
+    """Lifecycle status of an ingested raw physical event."""
+
+    RECEIVED = "RECEIVED"
+    VALIDATED = "VALIDATED"
+    QUARANTINED = "QUARANTINED"
+    CORRELATED = "CORRELATED"

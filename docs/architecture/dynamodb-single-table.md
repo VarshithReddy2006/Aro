@@ -44,7 +44,7 @@ Core storage principles:
 | **User** | `ORG#<org_id>` | `USER#<user_id>` | — | — | — | — | — |
 | **Policy** | `ORG#<org_id>` | `POLICY` | — | — | — | — | — |
 | **Case (Header)** | `CASE#<case_id>` | `CASE` | `ORG#<org_id>` | `CASE#<updated_at>` | `ORG#<org_id>#STATUS#<status>` | `<updated_at>#<case_id>` | — |
-| **Ring Event** | `CASE#<case_id>` | `EVENT#<event_id>` | `DEVICE#<device_id>` | `<occurred_at>` | — | — | — |
+| **Ring Event (Raw)** | `EVENT#<event_id>` | `RAW` | `CASE#<case_id>` (post-correlation) | `EVENT#<occurred_at>` | — | — | — |
 | **Normalized Event** | `CASE#<case_id>` | `NORM_EVENT#<norm_id>` | — | — | — | — | — |
 | **Case Context** | `CASE#<case_id>` | `CONTEXT` | — | — | — | — | — |
 | **Case Brief** | `CASE#<case_id>` | `BRIEF#<brief_id>` | — | — | — | — | — |
@@ -56,6 +56,28 @@ Core storage principles:
 | **Expected Delivery** | `LOC#<location_id>` | `DELIVERY#<window_start>#<id>` | `ORG#<org_id>` | `TRACKING#<tracking_number>` | — | — | — |
 | **Idempotency Record** | `IDEMP#<idempotency_key>` | `RECORD` | — | — | — | — | `expires_at_epoch` |
 | **Ring Webhook Dedup** | `DEDUP#RING#<request_id>` | `RECORD` | — | — | — | — | `expires_at_epoch` |
+
+---
+
+### 3.1 Pre-Ingestion Raw Event Lifecycle and Case Correlation
+
+Raw Ring events arrive at the webhook before an operational case exists. The lifecycle separates event arrival from case correlation:
+
+1. **HMAC Verification Guard**:
+   - The webhook checks the HMAC signature before persisting anything.
+   - Forged or unsigned requests are rejected immediately (HTTP 401) with **zero database writes**.
+2. **Replay & Deduplication**:
+   - The request ID is recorded in `DEDUP#RING#<request_id>` using a conditional put.
+   - Duplicate submissions are acknowledged safely without creating duplicate raw events or duplicate cases.
+3. **Pre-Case Raw Event Storage**:
+   - Stored at `PK = EVENT#<event_id>`, `SK = RAW`.
+   - Preserves: `event_id`, `request_id`, `device_id`, `event_type`, `occurred_at`, `received_at`, `provenance`, `payload`, `signature_verified=True`, `processing_status='RECEIVED'` (or `'VALIDATED'`).
+   - If payload is malformed despite valid signature, stored with `processing_status='QUARANTINED'` and `quarantine_reason` for investigation.
+4. **Downstream Case Correlation**:
+   - When downstream processing associates or correlates the event to a case:
+     - `EVENT#<event_id> / RAW` is updated with `case_id = <case_id>`, `processing_status = 'CORRELATED'`, and `GSI1PK = CASE#<case_id>`, `GSI1SK = EVENT#<occurred_at>`.
+     - The case partition receives the enriched `NormalizedEvent` at `PK = CASE#<case_id>, SK = NORM_EVENT#<norm_id>` with a back-reference to `source_event_id`.
+   - **No Payload Duplication**: The full raw JSON payload resides solely on the `EVENT#<event_id> / RAW` item, while the case partition contains normalized event metadata.
 
 ---
 

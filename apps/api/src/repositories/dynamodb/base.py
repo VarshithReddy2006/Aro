@@ -73,6 +73,14 @@ def format_action_sk(action_id: str) -> str:
     return f"ACTION#{action_id}"
 
 
+def format_event_pk(event_id: str) -> str:
+    return f"EVENT#{event_id}"
+
+
+def format_raw_event_sk() -> str:
+    return "RAW"
+
+
 def format_event_sk(event_id: str) -> str:
     return f"EVENT#{event_id}"
 
