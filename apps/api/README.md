@@ -1,4 +1,4 @@
-# ParcelProof API
+# Aro API
 
 Planned runtime: AWS API Gateway + Lambda, with a shared application/domain layer for HTTP and MCP.
 
