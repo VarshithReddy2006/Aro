@@ -1,15 +1,14 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { App } from "./App";
+import "./index.css";
 
-function App() {
-  return (
-    <main style={{ fontFamily: "system-ui", padding: 40 }}>
-      <h1>Aro</h1>
-      <p>Ring-triggered, human-approved operational case system.</p>
-    </main>
+const container = document.getElementById("root");
+if (container) {
+  const root = createRoot(container);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><App /></React.StrictMode>,
-);
