@@ -9,8 +9,10 @@ from packages.contracts.models import (
     AuditEvent,
     Case,
     ExpectedDelivery,
+    Location,
     NormalizedEvent,
     Policy,
+    RingDevice,
     RingEvent,
 )
 
@@ -180,4 +182,28 @@ class PolicyRepository(Protocol):
 
     def get_policy(self, organization_id: str) -> Policy | None:
         """Retrieve policy for an organization."""
+        ...
+
+
+class DeviceRepository(Protocol):
+    """Persistence operations for registered Ring devices."""
+
+    def save_device(self, device: RingDevice) -> RingDevice:
+        """Persist or update a Ring device record."""
+        ...
+
+    def get_device(self, device_id: str) -> RingDevice | None:
+        """Retrieve a Ring device by ID."""
+        ...
+
+
+class LocationRepository(Protocol):
+    """Persistence operations for monitored facility locations."""
+
+    def save_location(self, location: Location) -> Location:
+        """Persist or update a location record."""
+        ...
+
+    def get_location(self, location_id: str) -> Location | None:
+        """Retrieve a location by ID."""
         ...

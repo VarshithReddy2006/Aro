@@ -21,8 +21,10 @@ from packages.contracts.models import (
     AuditEvent,
     Case,
     ExpectedDelivery,
+    Location,
     NormalizedEvent,
     Policy,
+    RingDevice,
     RingEvent,
 )
 
@@ -452,3 +454,39 @@ class InMemoryPolicyRepository:
         with self._lock:
             pol = self._policies.get(organization_id)
             return deepcopy(pol) if pol else None
+
+
+class InMemoryDeviceRepository:
+    """Thread-safe in-memory Device repository."""
+
+    def __init__(self) -> None:
+        self._devices: dict[str, RingDevice] = {}
+        self._lock = Lock()
+
+    def save_device(self, device: RingDevice) -> RingDevice:
+        with self._lock:
+            self._devices[device.device_id] = deepcopy(device)
+            return deepcopy(device)
+
+    def get_device(self, device_id: str) -> RingDevice | None:
+        with self._lock:
+            dev = self._devices.get(device_id)
+            return deepcopy(dev) if dev else None
+
+
+class InMemoryLocationRepository:
+    """Thread-safe in-memory Location repository."""
+
+    def __init__(self) -> None:
+        self._locations: dict[str, Location] = {}
+        self._lock = Lock()
+
+    def save_location(self, location: Location) -> Location:
+        with self._lock:
+            self._locations[location.location_id] = deepcopy(location)
+            return deepcopy(location)
+
+    def get_location(self, location_id: str) -> Location | None:
+        with self._lock:
+            loc = self._locations.get(location_id)
+            return deepcopy(loc) if loc else None
