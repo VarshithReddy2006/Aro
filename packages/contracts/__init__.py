@@ -1,6 +1,6 @@
-"""Domain models for Aro API, re-exporting canonical shared contracts."""
+"""Aro contracts package exposing canonical models, enums, and state machine."""
 
-from packages.contracts.enums import (
+from .enums import (
     ActionStatus,
     ActionType,
     AuditEventType,
@@ -9,7 +9,7 @@ from packages.contracts.enums import (
     Provenance,
     Role,
 )
-from packages.contracts.models import (
+from .models import (
     Action,
     Approval,
     AuditEvent,
@@ -27,8 +27,20 @@ from packages.contracts.models import (
     RingEvent,
     User,
 )
+from .state_machine import (
+    ALLOWED_TRANSITIONS,
+    DirectExecutionWithoutApprovalError,
+    InvalidStateTransitionError,
+    StateMachineError,
+    StateVersionMismatchError,
+    TerminalStateError,
+    can_transition,
+    transition_case,
+    validate_transition,
+)
 
 __all__ = [
+    "ALLOWED_TRANSITIONS",
     "Action",
     "ActionStatus",
     "ActionType",
@@ -39,9 +51,11 @@ __all__ = [
     "CaseBrief",
     "CaseContext",
     "CaseStatus",
+    "DirectExecutionWithoutApprovalError",
     "EvidenceBundle",
     "ExpectedDelivery",
     "ExpectedDeliveryStatus",
+    "InvalidStateTransitionError",
     "Location",
     "NormalizedEvent",
     "Organization",
@@ -51,5 +65,11 @@ __all__ = [
     "RingDevice",
     "RingEvent",
     "Role",
+    "StateMachineError",
+    "StateVersionMismatchError",
+    "TerminalStateError",
     "User",
+    "can_transition",
+    "transition_case",
+    "validate_transition",
 ]
