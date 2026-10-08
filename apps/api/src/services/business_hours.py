@@ -31,8 +31,12 @@ class BusinessHoursService:
         """
         # Parse timestamp to UTC datetime
         if isinstance(occurred_at, str):
-            cleaned = occurred_at.strip().replace("Z", "+00:00")
-            dt = datetime.fromisoformat(cleaned)
+            try:
+                cleaned = occurred_at.strip().replace("Z", "+00:00")
+                dt = datetime.fromisoformat(cleaned)
+            except (ValueError, TypeError):
+                # Fail-closed: unparseable timestamp defaults to after-hours
+                return True
         else:
             dt = occurred_at
 

@@ -228,6 +228,100 @@ class CaseBrief(BaseModel):
     )
 
 
+class NotifyOperatorParameters(BaseModel):
+    """Validated parameters for NOTIFY_OPERATOR proposal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    message: str = Field(..., min_length=1, max_length=500, description="Notification message")
+    urgency: str = Field(
+        default="normal",
+        pattern="^(low|normal|high|urgent)$",
+        description="Operational urgency level",
+    )
+    recipient_role: Role = Field(default=Role.OPERATOR, description="Target recipient role")
+
+
+class MarkForReviewParameters(BaseModel):
+    """Validated parameters for MARK_FOR_REVIEW proposal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    review_reason: str = Field(
+        ..., min_length=1, max_length=500, description="Rationale for manual review"
+    )
+    priority: str = Field(
+        default="medium",
+        pattern="^(low|medium|high)$",
+        description="Review queue priority",
+    )
+
+
+class RequestConfirmationParameters(BaseModel):
+    """Validated parameters for REQUEST_OPERATOR_CONFIRMATION proposal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confirmation_type: str = Field(
+        ..., min_length=1, max_length=200, description="Specific item or detail to confirm"
+    )
+    target_role: Role = Field(default=Role.OPERATOR, description="Role requested to confirm")
+
+
+class RecordNoActionParameters(BaseModel):
+    """Validated parameters for RECORD_NO_ACTION proposal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rationale: str = Field(
+        ..., min_length=1, max_length=500, description="Justification for taking no action"
+    )
+
+
+class AIProposedAction(BaseModel):
+    """Proposed action emitted by bounded AI model."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    action_type: ActionType = Field(..., description="Allowlisted action type")
+    reason: str = Field(..., min_length=1, max_length=500, description="Factual justification")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="Action parameters")
+
+
+class AIBriefOutput(BaseModel):
+    """Strict structured schema required from AI model generation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    summary: str = Field(..., min_length=1, max_length=1000, description="Factual brief summary")
+    facts: list[str] = Field(..., min_length=1, description="Traceable factual claims from context")
+    unknowns: list[str] = Field(..., min_length=1, description="Explicit operational unknowns")
+    context_match: str = Field(
+        ..., min_length=1, max_length=200, description="Context match assessment"
+    )
+    proposals: list[AIProposedAction] = Field(
+        ..., min_length=1, description="Allowlisted proposals"
+    )
+
+
+class AIBriefInput(BaseModel):
+    """Sanitized, bounded input contract provided to AI brief generator."""
+
+    model_config = ConfigDict(frozen=True)
+
+    case_id: str = Field(..., min_length=1)
+    organization_id: str = Field(..., min_length=1)
+    location: dict[str, Any] = Field(default_factory=dict)
+    device: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    business_context: dict[str, Any] = Field(default_factory=dict)
+    expected_delivery: dict[str, Any] = Field(default_factory=dict)
+    known_facts: list[str] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
+    allowed_actions: list[ActionType] = Field(default_factory=list)
+    prompt_version: str = Field(default="2026-10-v1")
+
+
 class Proposal(BaseModel):
     """Allowlisted operational action proposal generated for human operator review."""
 

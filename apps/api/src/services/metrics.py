@@ -53,6 +53,15 @@ class IngestionMetrics:
     ring_events_validated: int = 0
     ring_events_correlated: int = 0
     ring_webhook_errors: int = 0
+    case_context_generated: int = 0
+    case_context_failed: int = 0
+    brief_generation_attempted: int = 0
+    brief_generation_succeeded: int = 0
+    brief_generation_failed: int = 0
+    brief_validation_failed: int = 0
+    brief_fallback_used: int = 0
+    proposal_created: int = 0
+    proposal_rejected: int = 0
     _latencies_ms: list[float] = field(default_factory=list)
 
     def inc_received(self) -> None:
@@ -87,6 +96,42 @@ class IngestionMetrics:
         with self._lock:
             self.ring_webhook_errors += 1
 
+    def inc_context_generated(self) -> None:
+        with self._lock:
+            self.case_context_generated += 1
+
+    def inc_context_failed(self) -> None:
+        with self._lock:
+            self.case_context_failed += 1
+
+    def inc_brief_attempted(self) -> None:
+        with self._lock:
+            self.brief_generation_attempted += 1
+
+    def inc_brief_succeeded(self) -> None:
+        with self._lock:
+            self.brief_generation_succeeded += 1
+
+    def inc_brief_failed(self) -> None:
+        with self._lock:
+            self.brief_generation_failed += 1
+
+    def inc_validation_failed(self) -> None:
+        with self._lock:
+            self.brief_validation_failed += 1
+
+    def inc_fallback_used(self) -> None:
+        with self._lock:
+            self.brief_fallback_used += 1
+
+    def inc_proposal_created(self) -> None:
+        with self._lock:
+            self.proposal_created += 1
+
+    def inc_proposal_rejected(self) -> None:
+        with self._lock:
+            self.proposal_rejected += 1
+
     def record_latency_ms(self, latency_ms: float) -> None:
         with self._lock:
             self._latencies_ms.append(latency_ms)
@@ -109,6 +154,15 @@ class IngestionMetrics:
                 "ring_events_validated": self.ring_events_validated,
                 "ring_events_correlated": self.ring_events_correlated,
                 "ring_webhook_errors": self.ring_webhook_errors,
+                "case_context_generated": self.case_context_generated,
+                "case_context_failed": self.case_context_failed,
+                "brief_generation_attempted": self.brief_generation_attempted,
+                "brief_generation_succeeded": self.brief_generation_succeeded,
+                "brief_generation_failed": self.brief_generation_failed,
+                "brief_validation_failed": self.brief_validation_failed,
+                "brief_fallback_used": self.brief_fallback_used,
+                "proposal_created": self.proposal_created,
+                "proposal_rejected": self.proposal_rejected,
                 "average_latency_ms": self.average_latency_ms,
                 "total_requests": len(self._latencies_ms),
             }
@@ -123,4 +177,13 @@ class IngestionMetrics:
             self.ring_events_validated = 0
             self.ring_events_correlated = 0
             self.ring_webhook_errors = 0
+            self.case_context_generated = 0
+            self.case_context_failed = 0
+            self.brief_generation_attempted = 0
+            self.brief_generation_succeeded = 0
+            self.brief_generation_failed = 0
+            self.brief_validation_failed = 0
+            self.brief_fallback_used = 0
+            self.proposal_created = 0
+            self.proposal_rejected = 0
             self._latencies_ms.clear()
