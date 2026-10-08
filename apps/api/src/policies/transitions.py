@@ -5,11 +5,15 @@ Re-exports the canonical transition definitions and validation rules from packag
 
 from packages.contracts.state_machine import (
     ALLOWED_TRANSITIONS,
+    ActionNotAllowlistedError,
+    ApprovalExpiredError,
     DirectExecutionWithoutApprovalError,
     InvalidStateTransitionError,
+    ProposalHashMismatchError,
     StateMachineError,
     StateVersionMismatchError,
     TerminalStateError,
+    UnauthorizedApproverError,
     can_transition,
     transition_case,
     validate_transition,
@@ -17,11 +21,15 @@ from packages.contracts.state_machine import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "ActionNotAllowlistedError",
+    "ApprovalExpiredError",
     "DirectExecutionWithoutApprovalError",
     "InvalidStateTransitionError",
+    "ProposalHashMismatchError",
     "StateMachineError",
     "StateVersionMismatchError",
     "TerminalStateError",
+    "UnauthorizedApproverError",
     "can_transition",
     "transition_case",
     "validate_transition",

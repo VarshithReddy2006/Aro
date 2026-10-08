@@ -89,3 +89,13 @@ class EventProcessingStatus(StrEnum):
     VALIDATED = "VALIDATED"
     QUARANTINED = "QUARANTINED"
     CORRELATED = "CORRELATED"
+
+
+class ApprovalDecision(StrEnum):
+    """Outcome of an operational human approval evaluation."""
+
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+Decision = ApprovalDecision

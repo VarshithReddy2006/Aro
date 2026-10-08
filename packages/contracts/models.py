@@ -8,11 +8,12 @@ Adheres strictly to Ring terminology:
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .enums import (
     ActionStatus,
     ActionType,
+    ApprovalDecision,
     AuditEventType,
     CaseStatus,
     EventProcessingStatus,
@@ -347,21 +348,50 @@ class Approval(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     approval_id: str = Field(..., min_length=1, description="Unique approval identifier")
+    organization_id: str = Field(
+        default="org_default", min_length=1, description="Tenant organization identifier"
+    )
     case_id: str = Field(..., min_length=1, description="Target case identifier")
-    case_version: int = Field(..., ge=1, description="Case version at time of approval")
     proposal_id: str = Field(..., min_length=1, description="Approved proposal identifier")
     proposal_hash: str = Field(
         ..., min_length=1, description="Proposal SHA-256 hash verified at approval time"
     )
-    approver_user_id: str = Field(
-        ..., min_length=1, description="Authenticated approver identifier"
-    )
-    approver_role: Role = Field(..., description="Role tier of approver (ADMIN or OPERATOR)")
+    approved_by: str = Field(default="", description="Authenticated approver identifier")
     approved_at: str = Field(
         default_factory=_utc_now_iso,
         description="ISO 8601 approval timestamp",
     )
     expires_at: str = Field(..., description="ISO 8601 timestamp after which approval is invalid")
+    decision: ApprovalDecision = Field(
+        default=ApprovalDecision.APPROVED, description="Approval decision: APPROVED or REJECTED"
+    )
+    case_version: int = Field(..., ge=1, description="Case version at time of approval")
+    created_at: str = Field(
+        default_factory=_utc_now_iso,
+        description="ISO 8601 creation timestamp",
+    )
+    updated_at: str = Field(
+        default_factory=_utc_now_iso,
+        description="ISO 8601 last update timestamp",
+    )
+    approver_user_id: str | None = Field(
+        default=None, description="Legacy/convenience alias for approved_by"
+    )
+    approver_role: Role = Field(
+        default=Role.OPERATOR, description="Role tier of approver (ADMIN or OPERATOR)"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_approver_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            approved_by = data.get("approved_by")
+            approver_user_id = data.get("approver_user_id")
+            if not approved_by and approver_user_id:
+                data["approved_by"] = approver_user_id
+            elif not approver_user_id and approved_by:
+                data["approver_user_id"] = approved_by
+        return data
 
 
 class Action(BaseModel):

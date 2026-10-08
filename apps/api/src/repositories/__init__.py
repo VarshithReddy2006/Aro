@@ -23,6 +23,7 @@ from .in_memory import (
     InMemoryIdempotencyRepository,
     InMemoryLocationRepository,
     InMemoryPolicyRepository,
+    InMemoryProposalRepository,
 )
 from .interfaces import (
     ActionRepository,
@@ -35,6 +36,7 @@ from .interfaces import (
     IdempotencyRepository,
     LocationRepository,
     PolicyRepository,
+    ProposalRepository,
 )
 
 __all__ = [
@@ -62,10 +64,12 @@ __all__ = [
     "InMemoryIdempotencyRepository",
     "InMemoryLocationRepository",
     "InMemoryPolicyRepository",
+    "InMemoryProposalRepository",
     "LocationRepository",
     "NotFoundError",
     "OrganizationAccessDeniedError",
     "PersistenceError",
     "PolicyRepository",
+    "ProposalRepository",
     "VersionMismatchError",
 ]

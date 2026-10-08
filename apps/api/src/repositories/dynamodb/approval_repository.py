@@ -74,3 +74,25 @@ class DynamoDBApprovalRepository:
             k: v for k, v in item.items() if k not in {"PK", "SK", "organization_id", "entity_type"}
         }
         return Approval.model_validate(data)
+
+    def list_approvals_for_case(self, case_id: str, organization_id: str) -> list[Approval]:
+        pk = format_case_pk(case_id)
+        from boto3.dynamodb.conditions import Key
+
+        try:
+            resp = self._table.query(
+                KeyConditionExpression=Key("PK").eq(pk) & Key("SK").begins_with("APPROVAL#")
+            )
+        except ClientError as e:
+            raise map_client_error(e, "Approval", case_id) from e
+
+        results: list[Approval] = []
+        for item in resp.get("Items", []):
+            if item.get("organization_id") == organization_id:
+                data = {
+                    k: v
+                    for k, v in item.items()
+                    if k not in {"PK", "SK", "organization_id", "entity_type"}
+                }
+                results.append(Approval.model_validate(data))
+        return results

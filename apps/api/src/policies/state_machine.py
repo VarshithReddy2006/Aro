@@ -2,11 +2,15 @@
 
 from .transitions import (
     ALLOWED_TRANSITIONS,
+    ActionNotAllowlistedError,
+    ApprovalExpiredError,
     DirectExecutionWithoutApprovalError,
     InvalidStateTransitionError,
+    ProposalHashMismatchError,
     StateMachineError,
     StateVersionMismatchError,
     TerminalStateError,
+    UnauthorizedApproverError,
     can_transition,
     transition_case,
     validate_transition,
@@ -14,11 +18,15 @@ from .transitions import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "ActionNotAllowlistedError",
+    "ApprovalExpiredError",
     "DirectExecutionWithoutApprovalError",
     "InvalidStateTransitionError",
+    "ProposalHashMismatchError",
     "StateMachineError",
     "StateVersionMismatchError",
     "TerminalStateError",
+    "UnauthorizedApproverError",
     "can_transition",
     "transition_case",
     "validate_transition",

@@ -3,6 +3,7 @@
 from packages.contracts.enums import (
     ActionStatus,
     ActionType,
+    ApprovalDecision,
     AuditEventType,
     CaseStatus,
     ExpectedDeliveryStatus,
@@ -33,6 +34,7 @@ __all__ = [
     "ActionStatus",
     "ActionType",
     "Approval",
+    "ApprovalDecision",
     "AuditEvent",
     "AuditEventType",
     "Case",

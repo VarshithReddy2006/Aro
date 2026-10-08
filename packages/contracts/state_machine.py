@@ -61,7 +61,49 @@ class DirectExecutionWithoutApprovalError(InvalidStateTransitionError):
         )
 
 
+class ProposalHashMismatchError(StateMachineError):
+    """Security violation: Human approval hash does not match the exact proposal hash."""
+
+    def __init__(self, expected_hash: str, provided_hash: str) -> None:
+        self.expected_hash = expected_hash
+        self.provided_hash = provided_hash
+        super().__init__(
+            f"Proposal hash mismatch: expected '{expected_hash}', but received '{provided_hash}'."
+        )
+
+
+class ApprovalExpiredError(StateMachineError):
+    """Security violation: Attempted approval or execution with an expired approval."""
+
+    def __init__(self, expires_at: str, current_time: str) -> None:
+        self.expires_at = expires_at
+        self.current_time = current_time
+        super().__init__(
+            f"Approval expired: valid until {expires_at}, current time is {current_time}."
+        )
+
+
+class UnauthorizedApproverError(StateMachineError):
+    """Authorization violation: User role is not permitted to approve operational cases."""
+
+    def __init__(self, user_id: str, role: str) -> None:
+        self.user_id = user_id
+        self.role = role
+        super().__init__(
+            f"Unauthorized approver '{user_id}' with role '{role}'. Only ADMIN or OPERATOR may approve."
+        )
+
+
+class ActionNotAllowlistedError(StateMachineError):
+    """Security violation: Attempted execution of an action not on the strict allowlist."""
+
+    def __init__(self, action_type: str) -> None:
+        self.action_type = action_type
+        super().__init__(f"Action '{action_type}' is not in the allowlist of permissible actions.")
+
+
 # Comprehensive deterministic transition table
+
 ALLOWED_TRANSITIONS: Mapping[CaseStatus, set[CaseStatus]] = {
     CaseStatus.RECEIVED: {
         CaseStatus.VALIDATED,
@@ -176,7 +218,8 @@ def transition_case(
 
     if target_status == CaseStatus.CLOSED:
         updates["closed_at"] = now_iso
-        if closure_reason is not None:
-            updates["closure_reason"] = closure_reason
+
+    if closure_reason is not None:
+        updates["closure_reason"] = closure_reason
 
     return case.model_copy(update=updates)

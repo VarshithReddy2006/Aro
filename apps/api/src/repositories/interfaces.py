@@ -12,6 +12,7 @@ from packages.contracts.models import (
     Location,
     NormalizedEvent,
     Policy,
+    Proposal,
     RingDevice,
     RingEvent,
 )
@@ -86,6 +87,10 @@ class ApprovalRepository(Protocol):
 
     def get_approval(self, case_id: str, approval_id: str, organization_id: str) -> Approval:
         """Retrieve an approval record by ID, enforcing tenant isolation."""
+        ...
+
+    def list_approvals_for_case(self, case_id: str, organization_id: str) -> list[Approval]:
+        """List all approvals for a case, enforcing tenant isolation."""
         ...
 
 
@@ -206,4 +211,16 @@ class LocationRepository(Protocol):
 
     def get_location(self, location_id: str) -> Location | None:
         """Retrieve a location by ID."""
+        ...
+
+
+class ProposalRepository(Protocol):
+    """Persistence operations for action proposals."""
+
+    def save_proposal(self, proposal: Proposal, organization_id: str) -> Proposal:
+        """Persist an action proposal bound to a case."""
+        ...
+
+    def get_proposal(self, case_id: str, proposal_id: str, organization_id: str) -> Proposal | None:
+        """Retrieve an action proposal by ID."""
         ...

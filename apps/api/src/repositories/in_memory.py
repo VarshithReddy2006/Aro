@@ -24,6 +24,7 @@ from packages.contracts.models import (
     Location,
     NormalizedEvent,
     Policy,
+    Proposal,
     RingDevice,
     RingEvent,
 )
@@ -210,6 +211,16 @@ class InMemoryApprovalRepository:
                 )
             return deepcopy(approval)
 
+    def list_approvals_for_case(self, case_id: str, organization_id: str) -> list[Approval]:
+        with self._lock:
+            results: list[Approval] = []
+            for app_id, app in self._approvals.items():
+                if app.case_id == case_id:
+                    actual_org = self._approval_orgs.get(app_id)
+                    if actual_org == organization_id:
+                        results.append(deepcopy(app))
+            return results
+
 
 class InMemoryActionRepository:
     """Thread-safe in-memory Action repository providing atomic execution locking."""
@@ -355,8 +366,18 @@ class InMemoryAuditRepository:
 
     def get_latest_audit_event(self, case_id: str, organization_id: str) -> AuditEvent | None:
         with self._lock:
-            timeline = self.get_case_timeline(case_id, organization_id)
-            return timeline[-1] if timeline else None
+            actual_org = self._case_orgs.get(case_id)
+            if actual_org and actual_org != organization_id:
+                raise OrganizationAccessDeniedError(
+                    target_resource=f"Audit/Case/{case_id}",
+                    expected_org_id=organization_id,
+                    actual_org_id=actual_org,
+                )
+            timeline = self._timelines.get(case_id, [])
+            if not timeline:
+                return None
+            sorted_events = sorted(timeline, key=lambda e: e.timestamp)
+            return deepcopy(sorted_events[-1])
 
 
 class InMemoryIdempotencyRepository:
@@ -490,3 +511,34 @@ class InMemoryLocationRepository:
         with self._lock:
             loc = self._locations.get(location_id)
             return deepcopy(loc) if loc else None
+
+
+class InMemoryProposalRepository:
+    """Thread-safe in-memory Proposal repository."""
+
+    def __init__(self) -> None:
+        self._proposals: dict[tuple[str, str], Proposal] = {}  # (case_id, proposal_id) -> Proposal
+        self._proposal_orgs: dict[tuple[str, str], str] = {}
+        self._lock = Lock()
+
+    def save_proposal(self, proposal: Proposal, organization_id: str) -> Proposal:
+        with self._lock:
+            key = (proposal.case_id, proposal.proposal_id)
+            self._proposals[key] = deepcopy(proposal)
+            self._proposal_orgs[key] = organization_id
+            return deepcopy(proposal)
+
+    def get_proposal(self, case_id: str, proposal_id: str, organization_id: str) -> Proposal | None:
+        with self._lock:
+            key = (case_id, proposal_id)
+            prop = self._proposals.get(key)
+            if not prop:
+                return None
+            actual_org = self._proposal_orgs.get(key)
+            if actual_org != organization_id:
+                raise OrganizationAccessDeniedError(
+                    target_resource=f"Proposal/{proposal_id}",
+                    expected_org_id=organization_id,
+                    actual_org_id=actual_org or "unknown",
+                )
+            return deepcopy(prop)
