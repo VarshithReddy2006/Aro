@@ -1,10 +1,10 @@
-# ParcelProof
+# ARO
 
 > Ring-triggered, human-approved operational case system for after-hours delivery activity at coworking and shared offices.
 
 ## Product boundary
 
-ParcelProof is **not** a Ring security dashboard, autonomous security agent, or generic ticketing system.
+ARO is **not** a Ring security dashboard, autonomous security agent, or generic ticketing system.
 
 Core flow:
 
@@ -15,7 +15,7 @@ AI explains and proposes. Deterministic code enforces. Humans approve consequent
 ## Repository layout
 
 ```text
-parcelproof/
+ARO/
 ├── apps/
 │   ├── api/              # AWS Lambda/API application layer
 │   └── web/              # React + Vite + TypeScript operator UI
@@ -33,7 +33,7 @@ parcelproof/
 
 ## MVP status
 
-Scaffold only. Implementation follows the approved ParcelProof architecture and MVP scope.
+Scaffold only. Implementation follows the approved ARO architecture and MVP scope.
 
 ## Engineering principles
 
