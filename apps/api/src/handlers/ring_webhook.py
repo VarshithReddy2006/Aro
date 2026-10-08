@@ -5,6 +5,7 @@ Thin adapter between AWS API Gateway / Lambda / HTTP runtime and EventIngestionS
 - Decodes base64 payload when API Gateway passes binary/encoded content.
 - Never exposes internal exceptions, secrets, or stack traces to clients.
 - Returns fast acknowledgment without synchronous Bedrock AI calls.
+- Emits RingEventReceived event to EventBridge upon valid ingestion.
 """
 
 import base64
@@ -19,11 +20,82 @@ from ..services.event_ingestion import EventIngestionService
 
 logger = logging.getLogger("aro.ring_webhook_handler")
 
+_cached_secret: str | None = None
+
+
+def _resolve_webhook_secret() -> str:
+    """Resolve Ring secret from environment or SSM Parameter Store."""
+    global _cached_secret
+    if _cached_secret:
+        return _cached_secret
+
+    secret = os.environ.get("RING_WEBHOOK_SECRET")
+    if secret:
+        _cached_secret = secret
+        return secret
+
+    param_name = os.environ.get("RING_SECRET_PARAM")
+    if param_name:
+        try:
+            import boto3
+
+            ssm = boto3.client("ssm")
+            resp = ssm.get_parameter(Name=param_name, WithDecryption=True)
+            param_val = resp.get("Parameter", {}).get("Value")
+            if param_val:
+                _cached_secret = param_val
+                return param_val
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not load Ring secret from SSM parameter %s: %s", param_name, exc)
+
+    return "default_insecure_test_secret"
+
+
+def _emit_eventbridge_notification(event_id: str, request_id: str | None) -> None:
+    """Emit asynchronous notification to EventBridge bus if configured."""
+    bus_name = os.environ.get("ARO_EVENT_BUS_NAME")
+    if not bus_name:
+        return
+    try:
+        import boto3
+
+        events_client = boto3.client("events")
+        detail = {
+            "event_id": event_id,
+            "request_id": request_id,
+            "source": "aro.ingest",
+        }
+        events_client.put_events(
+            Entries=[
+                {
+                    "EventBusName": bus_name,
+                    "Source": "aro.events",
+                    "DetailType": "RingEventReceived",
+                    "Detail": json.dumps(detail),
+                }
+            ]
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to emit EventBridge notification for event %s: %s", event_id, exc)
+
 
 def _get_default_service() -> EventIngestionService:
     """Build a default ingestion service if none injected."""
-    secret = os.environ.get("RING_WEBHOOK_SECRET", "default_insecure_test_secret")
-    repo = InMemoryEventRepository()
+    secret = _resolve_webhook_secret()
+    table_name = os.environ.get("ARO_TABLE_NAME")
+    if table_name and "demo" not in os.environ.get("ARO_ENV", "demo").lower():
+        try:
+            import boto3
+
+            from ..repositories.dynamodb import DynamoDBEventRepository
+
+            table = boto3.resource("dynamodb").Table(table_name)
+            repo = DynamoDBEventRepository(table)  # type: ignore[assignment]
+            return EventIngestionService(event_repository=repo, webhook_secret=secret)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not connect to DynamoDB table %s: %s", table_name, exc)
+
+    repo = InMemoryEventRepository()  # type: ignore[assignment]
     return EventIngestionService(event_repository=repo, webhook_secret=secret)
 
 
@@ -78,6 +150,10 @@ def handle_ring_webhook(
             headers=raw_headers,
             client_ip=client_ip,
         )
+
+        # Asynchronously notify downstream processing on successful non-duplicate ingestion
+        if result.status_code == 200 and result.event_id and not result.duplicate:
+            _emit_eventbridge_notification(result.event_id, result.request_id)
 
         return {
             "statusCode": result.status_code,
