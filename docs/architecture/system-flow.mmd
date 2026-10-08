@@ -1,0 +1,18 @@
+flowchart LR
+    R[Ring] --> G[API Gateway]
+    G --> I[Ingest Lambda\nHMAC + replay + dedupe]
+    I --> D[(DynamoDB)]
+    I --> E[EventBridge]
+    E --> C[Case Lambda]
+    C --> D
+    C --> B[Brief Lambda]
+    B --> AI[Amazon Bedrock\nbounded structured output]
+    AI --> V[Schema Validator]
+    V --> D
+    D --> H[Human Approval]
+    H --> A[Action Lambda]
+    A --> N[Notification Adapter]
+    A --> S[(S3 Evidence)]
+    A --> D
+    W[React Web] --> G
+    M[MCP Adapter] --> G
